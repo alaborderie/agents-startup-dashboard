@@ -124,7 +124,8 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE ventures
-		SET missing_since = COALESCE(missing_since, now())
+		SET missing_since = COALESCE(missing_since, now()),
+		    snapshot_generated_at = $2
 		WHERE NOT (slug = ANY($1::text[]))
 		  AND snapshot_generated_at <= $2`, presentSlugs, snapshot.GeneratedAt); err != nil {
 		return ApplyResult{}, fmt.Errorf("mark missing ventures: %w", err)

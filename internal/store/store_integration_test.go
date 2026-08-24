@@ -233,6 +233,56 @@ func TestRemovedVentureIsRetainedAndMarkedMissing(t *testing.T) {
 	}
 }
 
+func TestStaleRetryCannotResurrectMissingVenture(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	seenAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Microsecond)
+	removed := testVenture("removed", "deployed")
+	survivor := testVenture("survivor", "in_progress")
+	first := Snapshot{
+		SnapshotID: "before-removal", GeneratedAt: seenAt,
+		Ventures: []Venture{removed, survivor},
+	}
+	if _, err := s.ApplySnapshot(context.Background(), first, first.Ventures, []string{"removed", "survivor"}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	omittedAt := seenAt.Add(20 * time.Minute)
+	omission := Snapshot{
+		SnapshotID: "after-removal", GeneratedAt: omittedAt,
+		Ventures: []Venture{survivor},
+	}
+	if _, err := s.ApplySnapshot(context.Background(), omission, omission.Ventures, []string{"survivor"}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	staleRemoved := testVenture("removed", "in_progress")
+	delayed := Snapshot{
+		SnapshotID: "delayed-before-removal", GeneratedAt: seenAt.Add(10 * time.Minute),
+		Ventures: []Venture{staleRemoved, survivor},
+	}
+	result, err := s.ApplySnapshot(context.Background(), delayed, delayed.Ventures, []string{"removed", "survivor"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Applied != 0 || result.SkippedStale != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+
+	var status string
+	var missing bool
+	var snapshotGeneratedAt time.Time
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT status, missing_since IS NOT NULL, snapshot_generated_at
+		FROM ventures WHERE slug = 'removed'`,
+	).Scan(&status, &missing, &snapshotGeneratedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "deployed" || !missing || !snapshotGeneratedAt.Equal(omittedAt) {
+		t.Fatalf("status = %q, missing = %t, snapshot_generated_at = %s", status, missing, snapshotGeneratedAt)
+	}
+}
+
 func TestStatusCanMoveFromDeployedToAbandoned(t *testing.T) {
 	resetDatabase(t)
 	s := New(testPool)
