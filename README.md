@@ -5,9 +5,8 @@ attempted** — what shipped, what is in flight, and what was abandoned and why.
 
 Live (once deployed): <https://agents-startup.antoinelaborderie.com>
 
-> **Status:** specification only. The service described below has not been
-> implemented yet, so the routes and local-development commands are not
-> currently available from this repository.
+> **Status:** M1 and M2 implemented. The service, snapshot ingest, embedded
+> migrations, and public dashboard are available; deployment work follows in M3.
 
 This is **internal tooling, not a product**. There is no revenue model, no
 signup, no admin UI, and no analytics. It exists so that the history of what the
@@ -75,7 +74,7 @@ tick fully restores it.
 
 ## Stack
 
-- Go 1.23+, stdlib `net/http` (`http.ServeMux` method+path patterns). No router.
+- Go 1.27, stdlib `net/http` (`http.ServeMux` method+path patterns). No router.
 - `html/template` + `embed.FS`. CSS inline in a `<style>` block. **Zero JS, no
   build step, no bundler.** Table above 640px, stacked cards below.
 - Postgres via `jackc/pgx/v5`, pool max 4.
@@ -163,6 +162,16 @@ curl -sS -X POST http://localhost:8080/ingest \
 
 # 4. Look at it
 open http://localhost:8080
+```
+
+Stopping and starting `go run ./cmd/dashboard` against the same container is safe:
+the embedded migration ledger records every applied SQL file and skips it on the
+next startup. Tests launch an isolated Postgres 16 container automatically:
+
+```sh
+go build ./...
+go vet ./...
+go test ./...
 ```
 
 To point the real company tick at a local server instead of production:

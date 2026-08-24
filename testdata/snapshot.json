@@ -1,0 +1,23 @@
+{
+  "snapshot_id": "local-example-snapshot",
+  "generated_at": "2026-08-24T22:31:07+02:00",
+  "cycle": 41,
+  "source": "local-example",
+  "ventures": [
+    {
+      "slug": "example-venture",
+      "title": "Example venture",
+      "field": "development",
+      "status": "in_progress",
+      "stage": "BUILD",
+      "kind": "product",
+      "description": "A safe local example used to exercise the ingest endpoint.",
+      "monetization": "A small monthly subscription.",
+      "abandoned_reason": null,
+      "abandoned_at_stage": null,
+      "url": null,
+      "repo_url": null,
+      "created": "2026-08-01T10:00:00+02:00"
+    }
+  ]
+}
