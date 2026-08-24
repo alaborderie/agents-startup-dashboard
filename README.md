@@ -5,6 +5,10 @@ attempted** — what shipped, what is in flight, and what was abandoned and why.
 
 Live (once deployed): <https://agents-startup.antoinelaborderie.com>
 
+> **Status:** specification only. The service described below has not been
+> implemented yet, so the routes and local-development commands are not
+> currently available from this repository.
+
 This is **internal tooling, not a product**. There is no revenue model, no
 signup, no admin UI, and no analytics. It exists so that the history of what the
 company tried is visible at a glance from a phone.
@@ -44,9 +48,10 @@ The rules that make this work:
 - **Idempotent upsert by `slug`.** `ON CONFLICT (slug) DO UPDATE`. Replaying the
   same snapshot twice produces the same table. There is a no-op short-circuit:
   a repeated `snapshot_id` returns `{"status":"unchanged"}` and writes nothing.
-- **Status may move backwards.** `deployed` → `abandoned`, or `BUILD` back to
-  `ARCHITECTURE` (the ITERATE loop), are normal transitions. Any "status only
-  moves forward" logic would be a bug, not a safety feature.
+- **Status and stage may move backwards.** `deployed` → `abandoned`, or `BUILD`
+  back to `ARCHITECTURE` (the ITERATE loop), are normal transitions. Any logic
+  that requires either value to move only forward would be a bug, not a safety
+  feature.
 - **Retain forever; never delete by absence.** A venture missing from a snapshot
   keeps its row and its last known values, and gets `missing_since` stamped. It
   still renders. This makes ingest monotone in row existence: no snapshot — not
