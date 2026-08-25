@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -235,6 +236,19 @@ func validateVentures(ventures []store.Venture) ([]store.Venture, []string, []st
 		}
 		venture.Description = truncate(venture.Description, 600)
 		venture.Monetization = truncate(venture.Monetization, 300)
+		if venture.DesignURL != nil {
+			trimmed := strings.TrimSpace(*venture.DesignURL)
+			parsed, err := url.ParseRequestURI(trimmed)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+				warnings = append(warnings, "venture "+label+": invalid design_url")
+				venture.DesignURL = nil
+			} else {
+				venture.DesignURL = &trimmed
+			}
+		}
+		if venture.Stage != nil && *venture.Stage == "DESIGN_REVIEW" && venture.DesignURL == nil {
+			warnings = append(warnings, "venture "+label+": DESIGN_REVIEW missing design_url")
+		}
 		if venture.Status == "abandoned" && (venture.AbandonedReason == nil || strings.TrimSpace(*venture.AbandonedReason) == "") {
 			warnings = append(warnings, "venture "+label+": abandoned reason not recorded")
 		}

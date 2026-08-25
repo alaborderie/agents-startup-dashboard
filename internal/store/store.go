@@ -32,6 +32,7 @@ type Venture struct {
 	AbandonedAtStage *string    `json:"abandoned_at_stage"`
 	URL              *string    `json:"url"`
 	RepoURL          *string    `json:"repo_url"`
+	DesignURL        *string    `json:"design_url"`
 	CreatedAt        *time.Time `json:"created"`
 }
 
@@ -84,11 +85,11 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO ventures (
 				slug, title, field, status, stage, kind, description, monetization,
-				abandoned_reason, abandoned_at_stage, url, repo_url, created_at,
-				last_seen_at, missing_since, snapshot_generated_at
+				abandoned_reason, abandoned_at_stage, url, repo_url, design_url,
+				created_at, last_seen_at, missing_since, snapshot_generated_at
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-				now(), NULL, $14
+				$14, now(), NULL, $15
 			)
 			ON CONFLICT (slug) DO UPDATE SET
 				title = EXCLUDED.title,
@@ -102,6 +103,7 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 				abandoned_at_stage = EXCLUDED.abandoned_at_stage,
 				url = EXCLUDED.url,
 				repo_url = EXCLUDED.repo_url,
+				design_url = EXCLUDED.design_url,
 				created_at = EXCLUDED.created_at,
 				last_seen_at = now(),
 				missing_since = NULL,
@@ -109,8 +111,8 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 			WHERE EXCLUDED.snapshot_generated_at >= ventures.snapshot_generated_at`,
 			venture.Slug, venture.Title, venture.Field, venture.Status, venture.Stage,
 			venture.Kind, venture.Description, venture.Monetization, venture.AbandonedReason,
-			venture.AbandonedAtStage, venture.URL, venture.RepoURL, venture.CreatedAt,
-			snapshot.GeneratedAt,
+			venture.AbandonedAtStage, venture.URL, venture.RepoURL, venture.DesignURL,
+			venture.CreatedAt, snapshot.GeneratedAt,
 		)
 		if err != nil {
 			return ApplyResult{}, fmt.Errorf("upsert venture %q: %w", venture.Slug, err)
@@ -171,13 +173,14 @@ type DashboardVenture struct {
 	AbandonedAtStage string
 	URL              string
 	RepoURL          string
+	DesignURL        string
 	CreatedAt        *time.Time
 }
 
 func (s *Store) ListVentures(ctx context.Context) ([]DashboardVenture, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT slug, title, field, status, stage, kind, description, monetization,
-		       abandoned_reason, abandoned_at_stage, url, repo_url, created_at
+		       abandoned_reason, abandoned_at_stage, url, repo_url, design_url, created_at
 		FROM ventures
 		WHERE hidden = false
 		ORDER BY CASE status
@@ -195,12 +198,12 @@ func (s *Store) ListVentures(ctx context.Context) ([]DashboardVenture, error) {
 	for rows.Next() {
 		var venture DashboardVenture
 		var stage, kind, description, monetization sql.NullString
-		var reason, reasonStage, liveURL, repoURL sql.NullString
+		var reason, reasonStage, liveURL, repoURL, designURL sql.NullString
 		var created sql.NullTime
 		if err := rows.Scan(
 			&venture.Slug, &venture.Title, &venture.Field, &venture.Status,
 			&stage, &kind, &description, &monetization, &reason, &reasonStage,
-			&liveURL, &repoURL, &created,
+			&liveURL, &repoURL, &designURL, &created,
 		); err != nil {
 			return nil, fmt.Errorf("scan venture: %w", err)
 		}
@@ -212,6 +215,7 @@ func (s *Store) ListVentures(ctx context.Context) ([]DashboardVenture, error) {
 		venture.AbandonedAtStage = reasonStage.String
 		venture.URL = liveURL.String
 		venture.RepoURL = repoURL.String
+		venture.DesignURL = designURL.String
 		if created.Valid {
 			venture.CreatedAt = &created.Time
 		}

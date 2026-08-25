@@ -143,7 +143,7 @@ func TestSchemaHasExactlyTheDesignedColumns(t *testing.T) {
 			"slug", "title", "field", "status", "stage", "kind", "description",
 			"monetization", "abandoned_reason", "abandoned_at_stage", "url", "repo_url",
 			"created_at", "first_seen_at", "last_seen_at", "missing_since",
-			"snapshot_generated_at", "hidden",
+			"snapshot_generated_at", "hidden", "design_url",
 		},
 		"ingest_snapshots": {
 			"id", "snapshot_id", "generated_at", "received_at", "venture_count",
@@ -182,6 +182,29 @@ func TestSchemaHasExactlyTheDesignedColumns(t *testing.T) {
 	}
 	if ventureIndexes != 1 {
 		t.Fatalf("venture index count = %d, want primary key only", ventureIndexes)
+	}
+}
+
+func TestDesignURLRoundTrips(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	stage := "DESIGN_REVIEW"
+	designURL := "https://design.example.invalid/canvas/venture-1"
+	venture := testVenture("design-review", "in_progress")
+	venture.Stage = &stage
+	venture.DesignURL = &designURL
+	snapshot := Snapshot{
+		SnapshotID: "design-review", GeneratedAt: time.Now().UTC(), Ventures: []Venture{venture},
+	}
+	if _, err := s.ApplySnapshot(context.Background(), snapshot, snapshot.Ventures, []string{venture.Slug}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ventures, err := s.ListVentures(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ventures) != 1 || ventures[0].Stage != stage || ventures[0].DesignURL != designURL {
+		t.Fatalf("ventures = %#v", ventures)
 	}
 }
 
