@@ -18,9 +18,9 @@ company tried is visible at a glance from a phone.
 |---|---|
 | **Idea title** | A few words. From `venture.json.title`. |
 | **Field** | `development` / `testing` / `finance` / … (enum in the company's `config.json .fields`). |
-| **Status** | `in_progress`, `abandoned`, or `deployed`. |
+| **Status** | `in_progress`, `abandoned`, or `deployed`; `DESIGN_REVIEW` is shown prominently while a design awaits human review. |
 | **Description** | A few lines: what it is, why it exists, how it works — plus how it could make money, when the venture is a product rather than internal tooling. |
-| **Link** | URL to the live product if deployed; empty otherwise. |
+| **Link** | URL to the live product, repository, and published design canvas when applicable. |
 
 Abandoned ventures show **why** they were abandoned. That is the most useful
 information on the page and the main reason it is worth building. When a reason
@@ -116,6 +116,7 @@ tick fully restores it.
       "abandoned_at_stage": null,
       "url": null,
       "repo_url": "https://github.com/…",
+      "design_url": "https://design.example/canvas/…",
       "created": "2026-08-01T10:00:00+02:00"
     }
   ]

@@ -23,6 +23,7 @@
     .field { color: #525950; }
     .status { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
     .status-in_progress { color: #075b45; background: #d7f2e9; }
+    .status-design_review { color: #674408; background: #fff0c2; }
     .status-deployed { color: #174f7b; background: #dcecf8; }
     .status-abandoned { color: #7e2822; background: #fae2df; }
     .description { max-width: 460px; line-height: 1.48; }
@@ -65,7 +66,9 @@
         <tr>
           <td data-label="Idea"><span class="title">{{.Title}}</span>{{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}</td>
           <td data-label="Field"><span class="field">{{.Field}}</span></td>
-          <td data-label="Status"><span class="status status-{{.Status}}">{{.Status}}</span></td>
+          <td data-label="Status">
+            {{if eq .Stage "DESIGN_REVIEW"}}<span class="status status-design_review">DESIGN_REVIEW</span>{{else}}<span class="status status-{{.Status}}">{{.Status}}</span>{{end}}
+          </td>
           <td data-label="Description" class="description">
             {{range paragraphs .Description}}<p>{{.}}</p>{{end}}
             {{if and .Monetization (ne .Kind "internal")}}<span class="monetization"><strong>Monetization:</strong> {{.Monetization}}</span>{{end}}
@@ -78,6 +81,7 @@
           </td>
           <td data-label="Links" class="links">
             {{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{end}}
+            {{if and (eq .Stage "DESIGN_REVIEW") .DesignURL}}<a href="{{.DesignURL}}" target="_blank" rel="noopener noreferrer">Review design</a>{{end}}
             {{if and .RepoURL (ne .Status "abandoned")}}<a href="{{.RepoURL}}">{{.RepoURL}}</a>{{end}}
           </td>
         </tr>

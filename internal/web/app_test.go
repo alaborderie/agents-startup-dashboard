@@ -93,6 +93,29 @@ func TestDashboardEmptyStateWithNullableFields(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsDesignReviewStatusAndCanvasLink(t *testing.T) {
+	designURL := "https://design.example.invalid/canvas/venture-1"
+	dataStore := &stubStore{ventures: []store.DashboardVenture{
+		{
+			Slug: "venture-1", Title: "Reviewable design", Field: "development",
+			Status: "in_progress", Stage: "DESIGN_REVIEW", DesignURL: designURL,
+		},
+	}}
+	app := newTestApp(t, dataStore)
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, body)
+	}
+	for _, required := range []string{"DESIGN_REVIEW", `href="` + designURL + `"`, "Review design"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("page missing %q: %s", required, body)
+		}
+	}
+}
+
 func TestRobotsAndHealth(t *testing.T) {
 	app := newTestApp(t, &stubStore{})
 	for _, test := range []struct {
@@ -149,6 +172,25 @@ func TestVentureValidationIsLenientAndTruncatesUnicode(t *testing.T) {
 		t.Fatalf("present slugs = %#v", present)
 	}
 	if len(warnings) != 4 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
+func TestDesignReviewValidationKeepsRowAndReportsBadOrMissingURL(t *testing.T) {
+	stage := "DESIGN_REVIEW"
+	badURL := "javascript:alert(1)"
+	ventures := []store.Venture{
+		{Slug: "missing", Title: "Missing", Field: "development", Status: "in_progress", Stage: &stage},
+		{Slug: "unsafe", Title: "Unsafe", Field: "development", Status: "in_progress", Stage: &stage, DesignURL: &badURL},
+	}
+	valid, _, warnings := validateVentures(ventures)
+	if len(valid) != 2 {
+		t.Fatalf("valid ventures = %#v", valid)
+	}
+	if valid[1].DesignURL != nil {
+		t.Fatalf("unsafe design URL survived validation: %#v", valid[1].DesignURL)
+	}
+	if len(warnings) != 3 {
 		t.Fatalf("warnings = %#v", warnings)
 	}
 }

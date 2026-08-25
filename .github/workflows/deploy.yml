@@ -84,5 +84,5 @@ jobs:
           password: ${{ secrets.VPS_SSH_PASSWORD }}
           port: ${{ secrets.VPS_SSH_PORT }}
           script: |
-            kubectl rollout restart deployment/agents-startup-dashboard
-            kubectl rollout status deployment/agents-startup-dashboard --timeout=120s
+            sudo kubectl rollout restart deployment/agents-startup-dashboard
+            sudo kubectl rollout status deployment/agents-startup-dashboard --timeout=120s
