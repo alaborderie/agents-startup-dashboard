@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
@@ -19,8 +21,8 @@ import (
 
 const maxRequestBody = 1 << 20
 
-//go:embed templates/*.html
-var templateFiles embed.FS
+//go:embed templates/*.html static/app.css
+var webFiles embed.FS
 
 type DataStore interface {
 	ApplySnapshot(context.Context, store.Snapshot, []store.Venture, []string, []string) (store.ApplyResult, error)
@@ -29,24 +31,35 @@ type DataStore interface {
 }
 
 type App struct {
-	store       DataStore
-	ingestToken string
-	template    *template.Template
-	now         func() time.Time
+	store          DataStore
+	ingestToken    string
+	template       *template.Template
+	stylesheet     []byte
+	stylesheetPath string
+	now            func() time.Time
 }
 
 func New(dataStore DataStore, ingestToken string) (*App, error) {
+	stylesheet, err := webFiles.ReadFile("static/app.css")
+	if err != nil {
+		return nil, err
+	}
+	stylesheetHash := sha256.Sum256(stylesheet)
+	stylesheetPath := fmt.Sprintf("/static/app.%x.css", stylesheetHash[:6])
+
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
 		"paragraphs": paragraphs,
-	}).ParseFS(templateFiles, "templates/*.html")
+	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
 	return &App{
-		store:       dataStore,
-		ingestToken: ingestToken,
-		template:    tmpl,
-		now:         time.Now,
+		store:          dataStore,
+		ingestToken:    ingestToken,
+		template:       tmpl,
+		stylesheet:     stylesheet,
+		stylesheetPath: stylesheetPath,
+		now:            time.Now,
 	}, nil
 }
 
@@ -56,7 +69,24 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /robots.txt", robots)
 	mux.Handle("POST /ingest", http.TimeoutHandler(http.HandlerFunc(a.ingest), 20*time.Second, ""))
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			a.serveStylesheet(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func (a *App) serveStylesheet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet || r.URL.Path != a.stylesheetPath {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(a.stylesheet)
 }
 
 func healthz(w http.ResponseWriter, _ *http.Request) {
@@ -72,8 +102,9 @@ func robots(w http.ResponseWriter, _ *http.Request) {
 }
 
 type pageData struct {
-	Ventures []store.DashboardVenture
-	LastSync string
+	Ventures       []store.DashboardVenture
+	LastSync       string
+	StylesheetPath string
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -92,8 +123,9 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Robots-Tag", "noindex")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.template.ExecuteTemplate(w, "index.html", pageData{
-		Ventures: ventures,
-		LastSync: syncLabel(a.now(), lastSync),
+		Ventures:       ventures,
+		LastSync:       syncLabel(a.now(), lastSync),
+		StylesheetPath: a.stylesheetPath,
 	}); err != nil {
 		return
 	}
