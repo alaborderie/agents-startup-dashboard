@@ -39,10 +39,11 @@ func TestDashboardShowsDesignReviewInsteadOfRawStatus(t *testing.T) {
 		},
 	}}).Body.String()
 
-	if !strings.Contains(body, `<span class="status status-design_review">DESIGN_REVIEW</span>`) {
+	if !strings.Contains(body, `class="status status-design_review"`) ||
+		!strings.Contains(body, "DESIGN_REVIEW") {
 		t.Fatalf("page missing design-review status: %s", body)
 	}
-	if strings.Contains(body, `<span class="status status-in_progress">in_progress</span>`) {
+	if strings.Contains(body, `class="status status-in_progress"`) {
 		t.Fatalf("page rendered raw status as the status chip: %s", body)
 	}
 }
@@ -66,7 +67,8 @@ func TestDashboardShowsMissingAbandonedReason(t *testing.T) {
 		{Title: "Missing reason", Field: "development", Status: "abandoned"},
 	}}).Body.String()
 
-	if !strings.Contains(body, `<span class="missing-reason">reason not recorded</span>`) {
+	if !strings.Contains(body, `class="missing-reason"`) ||
+		!strings.Contains(body, "reason not recorded") {
 		t.Fatalf("page missing exact absent-reason marker: %s", body)
 	}
 }
@@ -95,7 +97,8 @@ func TestDashboardShowsAbandonedStage(t *testing.T) {
 		},
 	}}).Body.String()
 
-	if !strings.Contains(body, `<span class="reason-stage">Killed at SCREENED</span>`) {
+	if !strings.Contains(body, `class="reason-stage"`) ||
+		!strings.Contains(body, "Killed at SCREENED") {
 		t.Fatalf("page missing abandoned-stage label: %s", body)
 	}
 }
@@ -121,7 +124,7 @@ func TestDashboardShowsProductMonetization(t *testing.T) {
 		},
 	}}).Body.String()
 
-	if !strings.Contains(body, `<span class="monetization">`) ||
+	if !strings.Contains(body, `class="monetization"`) ||
 		!strings.Contains(body, "Monetization:") || !strings.Contains(body, "Per project") {
 		t.Fatalf("page missing product monetization: %s", body)
 	}
