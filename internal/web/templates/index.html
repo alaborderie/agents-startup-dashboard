@@ -14,35 +14,37 @@
       <p class="sync">{{.LastSync}}</p>
     </header>
     {{if .Ventures}}
-    <table>
-      <thead><tr><th>Idea</th><th>Field</th><th>Status</th><th>Description</th><th>Links</th></tr></thead>
-      <tbody>
+    <ul class="ventures">
       {{range .Ventures}}
-        <tr>
-          <td data-label="Idea"><span class="title">{{.Title}}</span>{{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}</td>
-          <td data-label="Field"><span class="field">{{.Field}}</span></td>
-          <td data-label="Status">
+        <li>
+          <article class="venture">
+            <div class="rail">
+              <h2 class="title">{{.Title}}</h2>
+              {{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}
+              <span class="field">{{.Field}}</span>
             {{if eq .Stage "DESIGN_REVIEW"}}<span class="status status-design_review">DESIGN_REVIEW</span>{{else}}<span class="status status-{{.Status}}">{{.Status}}</span>{{end}}
-          </td>
-          <td data-label="Description" class="description">
-            {{range paragraphs .Description}}<p>{{.}}</p>{{end}}
-            {{if and .Monetization (ne .Kind "internal")}}<span class="monetization"><strong>Monetization:</strong> {{.Monetization}}</span>{{end}}
-            {{if eq .Status "abandoned"}}
-              <div class="reason">
-                {{if .AbandonedAtStage}}<span class="reason-stage">Killed at {{.AbandonedAtStage}}</span>{{end}}
-                {{if .AbandonedReason}}{{.AbandonedReason}}{{else}}<span class="missing-reason">reason not recorded</span>{{end}}
+            </div>
+            <div class="body">
+              <div class="description">
+                {{range paragraphs .Description}}<p>{{.}}</p>{{end}}
+                {{if and .Monetization (ne .Kind "internal")}}<span class="monetization"><strong>Monetization:</strong> {{.Monetization}}</span>{{end}}
+                {{if eq .Status "abandoned"}}
+                  <div class="reason">
+                    {{if .AbandonedAtStage}}<span class="reason-stage">Killed at {{.AbandonedAtStage}}</span>{{end}}
+                    {{if .AbandonedReason}}{{.AbandonedReason}}{{else}}<span class="missing-reason">reason not recorded</span>{{end}}
+                  </div>
+                {{end}}
               </div>
-            {{end}}
-          </td>
-          <td data-label="Links" class="links">
-            {{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{end}}
-            {{if and (eq .Stage "DESIGN_REVIEW") .DesignURL}}<a href="{{.DesignURL}}" target="_blank" rel="noopener noreferrer">Review design</a>{{end}}
-            {{if and .RepoURL (ne .Status "abandoned")}}<a href="{{.RepoURL}}">{{.RepoURL}}</a>{{end}}
-          </td>
-        </tr>
+              <div class="links">
+                {{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{end}}
+                {{if and (eq .Stage "DESIGN_REVIEW") .DesignURL}}<a href="{{.DesignURL}}" target="_blank" rel="noopener noreferrer">Review design</a>{{end}}
+                {{if and .RepoURL (ne .Status "abandoned")}}<a href="{{.RepoURL}}">{{.RepoURL}}</a>{{end}}
+              </div>
+            </div>
+          </article>
+        </li>
       {{end}}
-      </tbody>
-    </table>
+    </ul>
     {{else}}
       <div class="empty">No ventures have arrived yet.</div>
     {{end}}

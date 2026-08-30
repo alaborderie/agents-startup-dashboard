@@ -170,6 +170,46 @@ func TestDashboardShowsEmptyVentureList(t *testing.T) {
 	}
 }
 
+func TestDashboardUsesOneCardLayoutAtEveryWidth(t *testing.T) {
+	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
+		{Title: "First venture", Field: "development", Status: "in_progress"},
+		{Title: "Second venture", Field: "other", Status: "deployed"},
+	}}).Body.String()
+
+	if got := strings.Count(body, `<article class="venture">`); got != 2 {
+		t.Fatalf("venture card count = %d body = %s", got, body)
+	}
+	for _, obsolete := range []string{"<table", "<thead", "<tbody", "<tr", "<th", "<td", "data-label="} {
+		if strings.Contains(body, obsolete) {
+			t.Fatalf("page contains obsolete table markup %q: %s", obsolete, body)
+		}
+	}
+}
+
+func TestCardStylesKeepNarrowViewportsFromOverflowing(t *testing.T) {
+	stylesheet, err := webFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(stylesheet)
+	for _, required := range []string{
+		"grid-template-columns: minmax(0, 1fr)",
+		"grid-template-columns: 200px minmax(0, 1fr)",
+		"min-height: 44px",
+		"overflow-wrap: anywhere",
+		"a:focus-visible",
+	} {
+		if !strings.Contains(css, required) {
+			t.Errorf("stylesheet missing narrow-viewport guard %q", required)
+		}
+	}
+	for _, obsolete := range []string{"white-space: nowrap", "table, tbody", "td::before"} {
+		if strings.Contains(css, obsolete) {
+			t.Errorf("stylesheet contains obsolete overflow hazard %q", obsolete)
+		}
+	}
+}
+
 func TestDashboardShowsNeverSynced(t *testing.T) {
 	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
 		{Title: "Minimal", Field: "other", Status: "in_progress"},
