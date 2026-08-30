@@ -19,6 +19,22 @@
       "repo_url": null,
       "design_url": null,
       "created": "2026-08-01T10:00:00+02:00"
+    },
+    {
+      "slug": "canonical-created-at",
+      "title": "Canonical created_at example",
+      "field": "development",
+      "status": "deployed",
+      "stage": "OPERATE",
+      "kind": "internal",
+      "description": "Exercises the canonical created_at spelling used by sync.sh.",
+      "monetization": null,
+      "abandoned_reason": null,
+      "abandoned_at_stage": null,
+      "url": "https://example.invalid",
+      "repo_url": null,
+      "design_url": null,
+      "created_at": "2026-08-15T09:30:00+02:00"
     }
   ]
 }

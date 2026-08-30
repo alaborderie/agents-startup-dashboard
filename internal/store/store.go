@@ -36,6 +36,30 @@ type Venture struct {
 	CreatedAt        *time.Time `json:"created"`
 }
 
+func (v *Venture) UnmarshalJSON(data []byte) error {
+	type plainVenture Venture
+
+	var decoded plainVenture
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if raw, ok := fields["created_at"]; ok {
+		var createdAt *time.Time
+		if err := json.Unmarshal(raw, &createdAt); err != nil {
+			return fmt.Errorf("decode created_at: %w", err)
+		}
+		decoded.CreatedAt = createdAt
+	}
+
+	*v = Venture(decoded)
+	return nil
+}
+
 type Snapshot struct {
 	SnapshotID  string    `json:"snapshot_id"`
 	GeneratedAt time.Time `json:"generated_at"`
