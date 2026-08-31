@@ -232,7 +232,7 @@ func buildPageData(ventures []store.DashboardVenture, spend store.DashboardSpend
 	}
 	company := spend.Company
 	view.Spend.HasData = true
-	view.Spend.Meta = spendMeta(spend.FirstTS, spend.Records, company.BackfilledRuns)
+	view.Spend.Meta = spendMeta(spend.FirstTS, spend.LastTS, spend.Records, company.BackfilledRuns)
 	view.Spend.Fresh = tokenFigure(company.Fresh, "fresh tokens", company.BackfilledRuns > 0)
 	view.Spend.Total = tokenFigure(company.Total, "including cache reads", company.BackfilledRuns > 0)
 	view.Spend.Orchestration = orchestrationPercent(company.UnattributedFresh, company.Fresh)
@@ -313,7 +313,7 @@ func formatRuns(runs int) string {
 	return strconv.Itoa(runs) + " runs"
 }
 
-func spendMeta(firstTS *time.Time, records, approximate int) string {
+func spendMeta(firstTS, lastTS *time.Time, records, approximate int) string {
 	since := "since ledger start"
 	if firstTS != nil {
 		since = "since " + firstTS.Format("2 Jan 2006")
@@ -321,6 +321,9 @@ func spendMeta(firstTS *time.Time, records, approximate int) string {
 	meta := fmt.Sprintf("%s · %s", since, formatRuns(records))
 	if approximate > 0 {
 		meta += fmt.Sprintf(" · ≈ %d approximate", approximate)
+	}
+	if lastTS != nil {
+		meta += " · through " + lastTS.Format("2 Jan 2006 15:04 MST")
 	}
 	return meta
 }

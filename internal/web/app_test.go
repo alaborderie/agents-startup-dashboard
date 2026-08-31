@@ -190,6 +190,7 @@ func TestDashboardShowsHonestNoSpendState(t *testing.T) {
 
 func TestDashboardLabelsEveryTokenFigureAndRendersSpendStates(t *testing.T) {
 	first := time.Date(2026, 8, 25, 10, 30, 0, 0, time.UTC)
+	last := time.Date(2026, 8, 30, 18, 1, 42, 0, time.UTC)
 	company := &store.CompanyTokens{
 		TokenAggregate: store.TokenAggregate{
 			Runs: 3, BackfilledRuns: 2, Total: 4_000_000, Fresh: 3_000_000,
@@ -210,7 +211,7 @@ func TestDashboardLabelsEveryTokenFigureAndRendersSpendStates(t *testing.T) {
 			{Title: "Predates ledger", Field: "other", Status: "abandoned"},
 		},
 		spend: store.DashboardSpend{
-			Company: company, FirstTS: &first, Records: 3,
+			Company: company, FirstTS: &first, LastTS: &last, Records: 3,
 			Roles: []store.RoleTokens{
 				{Role: "developer", TokenAggregate: store.TokenAggregate{Runs: 2, BackfilledRuns: 1, Fresh: 2_000_000}},
 				{Role: "ceo", TokenAggregate: store.TokenAggregate{Runs: 1, Fresh: 1_000_000}},
@@ -227,6 +228,7 @@ func TestDashboardLabelsEveryTokenFigureAndRendersSpendStates(t *testing.T) {
 	}
 	for _, required := range []string{
 		`class="spend-cell spend-cell-fresh"`, "fresh tokens", "including cache reads",
+		"through 30 Aug 2026 18:01 UTC",
 		"33.3%", "orchestration (CEO) — not attributable to any venture",
 		"$1.25", "measured across 1 of 3 runs — opencode only; codex and Claude report no price",
 		"orphan-ledger-row", "Spend by agent", ">ceo<",
