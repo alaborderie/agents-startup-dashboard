@@ -147,7 +147,21 @@ func TestSchemaHasExactlyTheDesignedColumns(t *testing.T) {
 		},
 		"ingest_snapshots": {
 			"id", "snapshot_id", "generated_at", "received_at", "venture_count",
-			"applied", "skipped_stale", "warnings", "source",
+			"applied", "skipped_stale", "warnings", "source", "token_records",
+		},
+		"venture_tokens": {
+			"slug", "runs", "failed_runs", "backfilled_runs", "total", "fresh",
+			"cost_usd", "cost_measured_runs", "seconds",
+		},
+		"role_tokens": {
+			"role", "runs", "failed_runs", "backfilled_runs", "total", "fresh",
+			"cost_usd", "cost_measured_runs", "seconds",
+		},
+		"company_tokens": {
+			"id", "records", "first_ts", "last_ts", "runs", "failed_runs",
+			"backfilled_runs", "live_runs", "total", "fresh", "unattributed_runs",
+			"unattributed_total", "unattributed_fresh", "cost_usd",
+			"cost_measured_runs", "seconds", "snapshot_generated_at",
 		},
 	}
 	for table, want := range expected {
@@ -371,9 +385,212 @@ func TestStaleGeneratedAtIsSkippedAndCounted(t *testing.T) {
 	}
 }
 
+func TestTokenBlockReplacesAllAggregateTables(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	generatedAt := time.Now().Add(-time.Minute).UTC()
+	venture := testVenture("tokened", "in_progress")
+	snapshot := Snapshot{
+		SnapshotID: "tokens-first", GeneratedAt: generatedAt, Ventures: []Venture{venture},
+		Tokens: testTokenBlock(generatedAt),
+	}
+	result, err := s.ApplySnapshot(context.Background(), snapshot, snapshot.Ventures, []string{venture.Slug}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TokenRecords != 3 || len(result.Warnings) != 0 {
+		t.Fatalf("result = %#v", result)
+	}
+	assertCount(t, "venture_tokens", 1)
+	assertCount(t, "role_tokens", 2)
+	assertCount(t, "company_tokens", 1)
+
+	var records, total, fresh, unattributed int64
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT records, total, fresh, unattributed_total FROM company_tokens`).Scan(&records, &total, &fresh, &unattributed); err != nil {
+		t.Fatal(err)
+	}
+	if records != 3 || total != 300 || fresh != 270 || unattributed != 100 {
+		t.Fatalf("company tokens = records:%d total:%d fresh:%d unattributed:%d", records, total, fresh, unattributed)
+	}
+
+	replacement := testTokenBlock(generatedAt.Add(time.Minute))
+	replacement.ByVenture[0].Total = 500
+	replacement.ByVenture[0].Fresh = 450
+	replacement.Company.Total = 600
+	replacement.Company.Fresh = 550
+	replacement.Company.Runs = 4
+	replacement.Company.UnattributedRuns = 2
+	second := Snapshot{
+		SnapshotID: "tokens-replacement", GeneratedAt: generatedAt.Add(time.Minute), Ventures: []Venture{venture}, Tokens: replacement,
+	}
+	if _, err := s.ApplySnapshot(context.Background(), second, second.Ventures, []string{venture.Slug}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var replacedTotal int64
+	if err := testPool.QueryRow(context.Background(), "SELECT total FROM venture_tokens WHERE slug = 'tokened'").Scan(&replacedTotal); err != nil {
+		t.Fatal(err)
+	}
+	if replacedTotal != 500 {
+		t.Fatalf("venture total = %d, want replacement total", replacedTotal)
+	}
+	var snapshotRecords int
+	if err := testPool.QueryRow(context.Background(), "SELECT token_records FROM ingest_snapshots WHERE snapshot_id = 'tokens-first'").Scan(&snapshotRecords); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotRecords != 3 {
+		t.Fatalf("token_records = %d, want 3", snapshotRecords)
+	}
+}
+
+func TestDashboardSpendJoinsVisibleVenturesAndSurfacesOnlyTrueOrphans(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	generatedAt := time.Now().Add(-time.Minute).UTC()
+	visible := testVenture("visible", "in_progress")
+	hidden := testVenture("hidden", "abandoned")
+	unmeasured := testVenture("unmeasured", "deployed")
+	block := testTokenBlock(generatedAt)
+	block.ByVenture[0].Slug = visible.Slug
+	block.ByVenture = append(block.ByVenture,
+		VentureTokens{Slug: hidden.Slug, TokenAggregate: TokenAggregate{Runs: 1, Total: 50, Fresh: 45}},
+		VentureTokens{Slug: "orphan", TokenAggregate: TokenAggregate{Runs: 1, Total: 25, Fresh: 20}},
+	)
+	block.Company.Runs = 5
+	block.Company.Total = 375
+	block.Company.Fresh = 335
+	snapshot := Snapshot{
+		SnapshotID: "dashboard-spend", GeneratedAt: generatedAt,
+		Ventures: []Venture{visible, hidden, unmeasured}, Tokens: block,
+	}
+	if _, err := s.ApplySnapshot(context.Background(), snapshot, snapshot.Ventures, []string{visible.Slug, hidden.Slug, unmeasured.Slug}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), "UPDATE ventures SET hidden = true WHERE slug = 'hidden'"); err != nil {
+		t.Fatal(err)
+	}
+
+	ventures, err := s.ListVentures(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ventures) != 2 {
+		t.Fatalf("visible ventures = %#v", ventures)
+	}
+	bySlug := make(map[string]DashboardVenture, len(ventures))
+	for _, venture := range ventures {
+		bySlug[venture.Slug] = venture
+	}
+	if bySlug[visible.Slug].Tokens == nil || bySlug[visible.Slug].Tokens.Fresh != 180 {
+		t.Fatalf("visible token join = %#v", bySlug[visible.Slug].Tokens)
+	}
+	if bySlug[unmeasured.Slug].Tokens != nil {
+		t.Fatalf("unmeasured venture has tokens = %#v", bySlug[unmeasured.Slug].Tokens)
+	}
+
+	spend, err := s.DashboardSpend(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spend.Company == nil || spend.Company.Fresh != 335 || spend.Records != 3 {
+		t.Fatalf("company spend = %#v", spend)
+	}
+	if len(spend.Roles) != 2 || spend.Roles[0].Role != "developer" {
+		t.Fatalf("roles = %#v", spend.Roles)
+	}
+	if len(spend.Unmatched) != 1 || spend.Unmatched[0].Slug != "orphan" {
+		t.Fatalf("unmatched = %#v; hidden venture must not be reported as unmatched", spend.Unmatched)
+	}
+}
+
+func TestTokenToleranceRetainsExistingRows(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	generatedAt := time.Now().Add(-time.Minute).UTC()
+	venture := testVenture("tokened", "in_progress")
+	first := Snapshot{SnapshotID: "tokens-first", GeneratedAt: generatedAt, Ventures: []Venture{venture}, Tokens: testTokenBlock(generatedAt)}
+	if _, err := s.ApplySnapshot(context.Background(), first, first.Ventures, []string{venture.Slug}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		tokens  *TokenBlock
+		warning string
+	}{
+		{name: "absent", warning: "tokens: absent from payload"},
+		{name: "empty", tokens: &TokenBlock{}, warning: "tokens: empty block ignored"},
+		{name: "company missing", tokens: &TokenBlock{Records: 3}, warning: "tokens: empty block ignored"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := Snapshot{
+				SnapshotID: fmt.Sprintf("tokens-tolerance-%d", i), GeneratedAt: generatedAt.Add(time.Duration(i+1) * time.Minute),
+				Ventures: []Venture{venture}, Tokens: tc.tokens,
+			}
+			result, err := s.ApplySnapshot(context.Background(), snapshot, snapshot.Ventures, []string{venture.Slug}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(result.Warnings, ";"), tc.warning) {
+				t.Fatalf("warnings = %#v, want %q", result.Warnings, tc.warning)
+			}
+			var total int64
+			if err := testPool.QueryRow(context.Background(), "SELECT total FROM company_tokens").Scan(&total); err != nil {
+				t.Fatal(err)
+			}
+			if total != 300 {
+				t.Fatalf("company total = %d, want retained 300", total)
+			}
+		})
+	}
+}
+
+func TestStaleTokenBlockIsSkippedButIdentityMismatchOnlyWarns(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	generatedAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	venture := testVenture("tokened", "in_progress")
+	first := Snapshot{SnapshotID: "tokens-first", GeneratedAt: generatedAt, Ventures: []Venture{venture}, Tokens: testTokenBlock(generatedAt)}
+	if _, err := s.ApplySnapshot(context.Background(), first, first.Ventures, []string{venture.Slug}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := Snapshot{SnapshotID: "tokens-stale", GeneratedAt: generatedAt.Add(-time.Minute), Ventures: []Venture{venture}, Tokens: testTokenBlock(generatedAt)}
+	result, err := s.ApplySnapshot(context.Background(), stale, stale.Ventures, []string{venture.Slug}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SkippedStale != 2 { // the venture and the token block are independently stale.
+		t.Fatalf("stale result = %#v", result)
+	}
+
+	mismatched := testTokenBlock(generatedAt.Add(time.Minute))
+	mismatched.Company.Total++
+	mismatched.LedgerVersion = 2
+	snapshot := Snapshot{SnapshotID: "tokens-mismatch", GeneratedAt: generatedAt.Add(time.Minute), Ventures: []Venture{venture}, Tokens: mismatched}
+	result, err = s.ApplySnapshot(context.Background(), snapshot, snapshot.Ventures, []string{venture.Slug}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinedWarnings := strings.Join(result.Warnings, ";")
+	for _, want := range []string{"tokens: company total != attributed + unattributed", "tokens: unsupported ledger version 2"} {
+		if !strings.Contains(joinedWarnings, want) {
+			t.Fatalf("warnings = %#v, want %q", result.Warnings, want)
+		}
+	}
+	var total int64
+	if err := testPool.QueryRow(context.Background(), "SELECT total FROM company_tokens").Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 301 {
+		t.Fatalf("mismatched company total = %d, want applied 301", total)
+	}
+}
+
 func resetDatabase(t *testing.T) {
 	t.Helper()
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE ventures, ingest_snapshots RESTART IDENTITY"); err != nil {
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE ventures, ingest_snapshots, venture_tokens, role_tokens, company_tokens RESTART IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := testPool.Exec(context.Background(), "DELETE FROM schema_migrations WHERE name LIKE 'proof/%'"); err != nil {
@@ -397,6 +614,12 @@ func assertCount(t *testing.T, table string, want int) {
 		query = "SELECT count(*) FROM ventures"
 	case "ingest_snapshots":
 		query = "SELECT count(*) FROM ingest_snapshots"
+	case "venture_tokens":
+		query = "SELECT count(*) FROM venture_tokens"
+	case "role_tokens":
+		query = "SELECT count(*) FROM role_tokens"
+	case "company_tokens":
+		query = "SELECT count(*) FROM company_tokens"
 	default:
 		t.Fatalf("unsupported table %q", table)
 	}
@@ -406,5 +629,22 @@ func assertCount(t *testing.T, table string, want int) {
 	}
 	if count != want {
 		t.Fatalf("%s count = %d, want %d", table, count, want)
+	}
+}
+
+func testTokenBlock(at time.Time) *TokenBlock {
+	return &TokenBlock{
+		LedgerVersion: 1, Records: 3, FirstTS: &at, LastTS: &at,
+		Company: &CompanyTokens{
+			TokenAggregate: TokenAggregate{Runs: 3, FailedRuns: 1, BackfilledRuns: 1, Total: 300, Fresh: 270, CostUSD: 1.25, CostMeasuredRuns: 1, Seconds: 42},
+			LiveRuns:       2, UnattributedRuns: 1, UnattributedTotal: 100, UnattributedFresh: 90,
+		},
+		ByVenture: []VentureTokens{{
+			Slug: "tokened", TokenAggregate: TokenAggregate{Runs: 2, FailedRuns: 1, BackfilledRuns: 1, Total: 200, Fresh: 180, CostUSD: 1.25, CostMeasuredRuns: 1, Seconds: 24},
+		}},
+		ByRole: []RoleTokens{
+			{Role: "developer", TokenAggregate: TokenAggregate{Runs: 2, FailedRuns: 1, BackfilledRuns: 1, Total: 200, Fresh: 180, CostUSD: 1.25, CostMeasuredRuns: 1, Seconds: 24}},
+			{Role: "ceo", TokenAggregate: TokenAggregate{Runs: 1, Total: 100, Fresh: 90, Seconds: 18}},
+		},
 	}
 }

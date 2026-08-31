@@ -24,6 +24,7 @@
     "Liberation Mono", monospace;
 
   --t-figure: clamp(1.75rem, 1.35rem + 1.6vw, 2.25rem);
+  --t-figure-secondary: clamp(1.26rem, .972rem + 1.152vw, 1.62rem);
   --t-h1: clamp(1.75rem, 1.3rem + 2vw, 2.5rem);
   --t-h2: 1.125rem;
   --t-title: clamp(1.0625rem, 1rem + .3vw, 1.1875rem);
@@ -101,6 +102,159 @@ h1 {
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.company-spend {
+  min-width: 0;
+  margin-block: var(--s-6);
+  padding: var(--s-5);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+}
+
+.section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-5);
+  min-width: 0;
+}
+
+.section-heading h2,
+.agent-spend h2,
+.unmatched-spend h3 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--t-h2);
+  font-weight: 500;
+  line-height: 1.18;
+}
+
+.section-heading p {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-label);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.spend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--s-5);
+  min-width: 0;
+  margin-top: var(--s-5);
+}
+
+.spend-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule);
+}
+
+.spend-cell-fresh {
+  border-top: 2px solid var(--accent);
+}
+
+.token-figure,
+.spend-value,
+.agent-runs,
+.unmatched-spend,
+.spend-notes {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-figure {
+  min-width: 0;
+}
+
+.token-value,
+.spend-value {
+  color: var(--ink-2);
+  font-size: var(--t-figure-secondary);
+  line-height: 1.05;
+  letter-spacing: -.01em;
+}
+
+.spend-cell-fresh .token-value {
+  color: var(--ink);
+  font-size: var(--t-figure);
+  font-weight: 600;
+}
+
+.token-label,
+.spend-label {
+  color: var(--ink-3);
+  font-size: var(--t-label);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.spend-cell .token-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.approx {
+  margin-right: var(--s-1);
+  color: var(--ink-3);
+  font-size: var(--t-label);
+  vertical-align: super;
+}
+
+.spend-label {
+  display: block;
+  margin-top: var(--s-1);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.spend-empty {
+  max-width: 60ch;
+  margin: var(--s-5) 0 0;
+  color: var(--ink-2);
+  font-size: var(--t-body);
+  line-height: 1.55;
+}
+
+.unmatched-spend {
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--rule);
+}
+
+.unmatched-spend h3 {
+  font-size: var(--t-body);
+}
+
+.unmatched-spend ul,
+.agent-spend ul {
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.unmatched-spend li {
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--t-meta);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.unmatched-slug {
+  color: var(--kill);
 }
 
 .ventures {
@@ -221,6 +375,59 @@ h1 {
 
 .field + .status {
   margin-top: var(--s-2);
+}
+
+.venture-spend {
+  min-width: 0;
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  color: var(--ink-2);
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.venture-spend .token-value,
+.venture-spend .token-label,
+.agent-figure .token-value,
+.agent-figure .token-label,
+.unmatched-spend .token-value,
+.unmatched-spend .token-label {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-transform: none;
+}
+
+.venture-spend-line,
+.venture-spend-total,
+.venture-spend-money {
+  overflow-wrap: anywhere;
+}
+
+.venture-spend-total,
+.venture-spend-money {
+  margin-top: var(--s-1);
+  color: var(--ink-3);
+  font-size: var(--t-label);
+}
+
+.spend-bar {
+  min-width: 0;
+  height: 6px;
+  margin-top: var(--s-2);
+  overflow: hidden;
+  background: var(--surface-sunk);
+  border-radius: var(--r-1);
+}
+
+.spend-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
 }
 
 .status-in_progress {
@@ -368,9 +575,111 @@ a:focus-visible {
   text-align: left;
 }
 
+.agent-spend {
+  min-width: 0;
+  margin-top: var(--s-7);
+}
+
+.agent-spend h2 {
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.agent-spend li {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+  min-width: 0;
+  min-height: 44px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.agent-spend li > * {
+  min-width: 0;
+}
+
+.agent-role,
+.agent-figure,
+.agent-runs {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-role {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.agent-figure {
+  color: var(--ink);
+  font-size: var(--t-meta);
+  text-align: right;
+}
+
+.agent-runs {
+  color: var(--ink-3);
+  font-size: var(--t-label);
+  text-align: right;
+}
+
+.agent-spend .spend-bar {
+  margin-top: 0;
+}
+
+.spend-notes {
+  margin-top: var(--s-6);
+  padding-top: var(--s-4);
+  color: var(--ink-3);
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-label);
+  line-height: 1.5;
+}
+
+.spend-notes p {
+  max-width: 90ch;
+  margin: 0;
+}
+
+.spend-notes p + p {
+  margin-top: var(--s-2);
+}
+
+.spend-notes code {
+  font-family: inherit;
+}
+
 @media (min-width: 481px) {
   :root {
     --gutter: 24px;
+  }
+}
+
+@media (max-width: 559px) {
+  .agent-spend li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-block: var(--s-2);
+  }
+
+  .agent-role {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .agent-figure {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .agent-spend .spend-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .agent-runs {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    text-align: left;
   }
 }
 

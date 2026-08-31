@@ -13,6 +13,38 @@
       <h1>Ventures</h1>
       <p class="sync">{{.LastSync}}</p>
     </header>
+    <section class="company-spend" aria-labelledby="company-spend-heading">
+      <div class="section-heading">
+        <h2 id="company-spend-heading">Company spend</h2>
+        {{if .Spend.HasData}}<p>{{.Spend.Meta}}</p>{{end}}
+      </div>
+      {{if .Spend.HasData}}
+        <div class="spend-grid">
+          <div class="spend-cell spend-cell-fresh">{{tokenFigure .Spend.Fresh}}</div>
+          <div class="spend-cell spend-cell-total">{{tokenFigure .Spend.Total}}</div>
+          <div class="spend-cell">
+            <span class="spend-value">{{.Spend.Orchestration}}</span>
+            <span class="spend-label">orchestration (CEO) — not attributable to any venture</span>
+          </div>
+          <div class="spend-cell">
+            <span class="spend-value">{{.Spend.Money}}</span>
+            <span class="spend-label">{{.Spend.MoneyScope}}</span>
+          </div>
+        </div>
+        {{if .Spend.Unmatched}}
+          <div class="unmatched-spend">
+            <h3>Unmatched venture spend</h3>
+            <ul>
+              {{range .Spend.Unmatched}}
+                <li><span class="unmatched-slug">{{.Slug}}</span> · {{tokenFigure .Fresh}} · {{.Runs}}</li>
+              {{end}}
+            </ul>
+          </div>
+        {{end}}
+      {{else}}
+        <p class="spend-empty">No spend data received yet. The panel fills in on the first sync that carries a tokens block.</p>
+      {{end}}
+    </section>
     {{if .Ventures}}
     <ul class="ventures">
       {{range .Ventures}}
@@ -23,6 +55,14 @@
               {{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}
               <span class="field">{{.Field}}</span>
             {{if eq .Stage "DESIGN_REVIEW"}}<span class="status status-design_review">DESIGN_REVIEW</span>{{else}}<span class="status status-{{.Status}}">{{.Status}}</span>{{end}}
+              {{if .Spend}}
+                <div class="venture-spend">
+                  <div class="venture-spend-line">{{tokenFigure .Spend.Fresh}} · {{.Spend.Runs}}</div>
+                  <div class="spend-bar" aria-hidden="true"><span style="width: {{.Spend.BarWidth}}"></span></div>
+                  <div class="venture-spend-total">{{tokenFigure .Spend.Total}}</div>
+                  {{if .Spend.Money}}<div class="venture-spend-money">{{.Spend.Money}}</div>{{end}}
+                </div>
+              {{end}}
             </div>
             <div class="body">
               <div class="description">
@@ -47,6 +87,27 @@
     </ul>
     {{else}}
       <div class="empty">No ventures have arrived yet.</div>
+    {{end}}
+    {{if .Agents}}
+      <section class="agent-spend" aria-labelledby="agent-spend-heading">
+        <h2 id="agent-spend-heading">Spend by agent</h2>
+        <ul>
+          {{range .Agents}}
+            <li>
+              <span class="agent-role">{{.Role}}</span>
+              <div class="spend-bar" aria-hidden="true"><span style="width: {{.BarWidth}}"></span></div>
+              <span class="agent-figure">{{tokenFigure .Fresh}}</span>
+              <span class="agent-runs">{{.Runs}}</span>
+            </li>
+          {{end}}
+        </ul>
+      </section>
+    {{end}}
+    {{if .Spend.HasData}}
+      <footer class="spend-notes">
+        <p>≈ reconstructed by matching engine sessions to <code>role_start</code> timestamps, not recorded live. Approximate.</p>
+        <p>CEO sessions before 2026-08-30 predate the ledger and are not counted; the one-off audit that day put orchestration at ~69% of all spend to date.</p>
+      </footer>
     {{end}}
   </main>
 </body>
