@@ -61,11 +61,51 @@ func (v *Venture) UnmarshalJSON(data []byte) error {
 }
 
 type Snapshot struct {
-	SnapshotID  string    `json:"snapshot_id"`
-	GeneratedAt time.Time `json:"generated_at"`
-	Cycle       int       `json:"cycle"`
-	Source      string    `json:"source"`
-	Ventures    []Venture `json:"ventures"`
+	SnapshotID  string      `json:"snapshot_id"`
+	GeneratedAt time.Time   `json:"generated_at"`
+	Cycle       int         `json:"cycle"`
+	Source      string      `json:"source"`
+	Ventures    []Venture   `json:"ventures"`
+	Tokens      *TokenBlock `json:"tokens"`
+}
+
+type TokenAggregate struct {
+	Runs             int     `json:"runs"`
+	FailedRuns       int     `json:"failed_runs"`
+	BackfilledRuns   int     `json:"backfilled_runs"`
+	Total            int64   `json:"total"`
+	Fresh            int64   `json:"fresh"`
+	CostUSD          float64 `json:"cost_usd"`
+	CostMeasuredRuns int     `json:"cost_measured_runs"`
+	Seconds          int64   `json:"seconds"`
+}
+
+type CompanyTokens struct {
+	TokenAggregate
+	LiveRuns          int   `json:"live_runs"`
+	UnattributedRuns  int   `json:"unattributed_runs"`
+	UnattributedTotal int64 `json:"unattributed_total"`
+	UnattributedFresh int64 `json:"unattributed_fresh"`
+}
+
+type VentureTokens struct {
+	Slug string `json:"slug"`
+	TokenAggregate
+}
+
+type RoleTokens struct {
+	Role string `json:"role"`
+	TokenAggregate
+}
+
+type TokenBlock struct {
+	LedgerVersion int             `json:"ledger_version"`
+	Records       int             `json:"records"`
+	FirstTS       *time.Time      `json:"first_ts"`
+	LastTS        *time.Time      `json:"last_ts"`
+	Company       *CompanyTokens  `json:"company"`
+	ByVenture     []VentureTokens `json:"by_venture"`
+	ByRole        []RoleTokens    `json:"by_role"`
 }
 
 type ApplyResult struct {
@@ -73,6 +113,7 @@ type ApplyResult struct {
 	Applied      int      `json:"applied,omitempty"`
 	SkippedStale int      `json:"skipped_stale,omitempty"`
 	Warnings     []string `json:"warnings,omitempty"`
+	TokenRecords int      `json:"token_records"`
 }
 
 func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Venture, presentSlugs []string, warnings []string) (ApplyResult, error) {
@@ -105,6 +146,11 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 	}
 
 	result := ApplyResult{Status: "applied", Warnings: warnings}
+	if snapshot.Tokens == nil {
+		result.Warnings = append(result.Warnings, "tokens: absent from payload")
+	} else {
+		result.TokenRecords = snapshot.Tokens.Records
+	}
 	for _, venture := range valid {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO ventures (
@@ -157,16 +203,41 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 		return ApplyResult{}, fmt.Errorf("mark missing ventures: %w", err)
 	}
 
-	warningsJSON, err := json.Marshal(warnings)
+	if snapshot.Tokens != nil {
+		if snapshot.Tokens.Records == 0 || snapshot.Tokens.Company == nil {
+			result.Warnings = append(result.Warnings, "tokens: empty block ignored")
+		} else {
+			var latest time.Time
+			err := tx.QueryRow(ctx, "SELECT snapshot_generated_at FROM company_tokens WHERE id = true").Scan(&latest)
+			if err != nil && err != pgx.ErrNoRows {
+				return ApplyResult{}, fmt.Errorf("read latest tokens: %w", err)
+			}
+			if err == nil && snapshot.GeneratedAt.Before(latest) {
+				result.SkippedStale++
+			} else {
+				if !tokenIdentityMatches(*snapshot.Tokens.Company, snapshot.Tokens.ByVenture) {
+					result.Warnings = append(result.Warnings, "tokens: company total != attributed + unattributed")
+				}
+				if snapshot.Tokens.LedgerVersion > 1 {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("tokens: unsupported ledger version %d", snapshot.Tokens.LedgerVersion))
+				}
+				if err := replaceTokens(ctx, tx, *snapshot.Tokens, snapshot.GeneratedAt); err != nil {
+					return ApplyResult{}, err
+				}
+			}
+		}
+	}
+
+	warningsJSON, err := json.Marshal(result.Warnings)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("encode warnings: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO ingest_snapshots (
-			snapshot_id, generated_at, venture_count, applied, skipped_stale, warnings, source
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			snapshot_id, generated_at, venture_count, applied, skipped_stale, warnings, source, token_records
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		snapshot.SnapshotID, snapshot.GeneratedAt, len(snapshot.Ventures), result.Applied,
-		result.SkippedStale, warningsJSON, snapshot.Source,
+		result.SkippedStale, warningsJSON, snapshot.Source, result.TokenRecords,
 	); err != nil {
 		return ApplyResult{}, fmt.Errorf("record snapshot: %w", err)
 	}
@@ -182,6 +253,62 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 		return ApplyResult{}, fmt.Errorf("commit snapshot: %w", err)
 	}
 	return result, nil
+}
+
+func tokenIdentityMatches(company CompanyTokens, ventures []VentureTokens) bool {
+	var runs int
+	var total, fresh int64
+	for _, venture := range ventures {
+		runs += venture.Runs
+		total += venture.Total
+		fresh += venture.Fresh
+	}
+	return company.Runs == runs+company.UnattributedRuns &&
+		company.Total == total+company.UnattributedTotal &&
+		company.Fresh == fresh+company.UnattributedFresh
+}
+
+func replaceTokens(ctx context.Context, tx pgx.Tx, block TokenBlock, generatedAt time.Time) error {
+	for _, table := range []string{"venture_tokens", "role_tokens", "company_tokens"} {
+		if _, err := tx.Exec(ctx, "DELETE FROM "+table); err != nil {
+			return fmt.Errorf("clear %s: %w", table, err)
+		}
+	}
+	for _, venture := range block.ByVenture {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO venture_tokens (slug, runs, failed_runs, backfilled_runs, total, fresh, cost_usd, cost_measured_runs, seconds)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			venture.Slug, venture.Runs, venture.FailedRuns, venture.BackfilledRuns, venture.Total,
+			venture.Fresh, venture.CostUSD, venture.CostMeasuredRuns, venture.Seconds,
+		); err != nil {
+			return fmt.Errorf("insert venture tokens %q: %w", venture.Slug, err)
+		}
+	}
+	for _, role := range block.ByRole {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO role_tokens (role, runs, failed_runs, backfilled_runs, total, fresh, cost_usd, cost_measured_runs, seconds)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			role.Role, role.Runs, role.FailedRuns, role.BackfilledRuns, role.Total,
+			role.Fresh, role.CostUSD, role.CostMeasuredRuns, role.Seconds,
+		); err != nil {
+			return fmt.Errorf("insert role tokens %q: %w", role.Role, err)
+		}
+	}
+	company := block.Company
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO company_tokens (
+			id, records, first_ts, last_ts, runs, failed_runs, backfilled_runs, live_runs,
+			total, fresh, unattributed_runs, unattributed_total, unattributed_fresh,
+			cost_usd, cost_measured_runs, seconds, snapshot_generated_at
+		) VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		block.Records, block.FirstTS, block.LastTS, company.Runs, company.FailedRuns,
+		company.BackfilledRuns, company.LiveRuns, company.Total, company.Fresh,
+		company.UnattributedRuns, company.UnattributedTotal, company.UnattributedFresh,
+		company.CostUSD, company.CostMeasuredRuns, company.Seconds, generatedAt,
+	); err != nil {
+		return fmt.Errorf("insert company tokens: %w", err)
+	}
+	return nil
 }
 
 type DashboardVenture struct {

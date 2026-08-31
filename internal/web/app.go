@@ -215,7 +215,8 @@ func (a *App) ingest(w http.ResponseWriter, r *http.Request) {
 		Applied      int      `json:"applied"`
 		SkippedStale int      `json:"skipped_stale"`
 		Warnings     []string `json:"warnings"`
-	}{result.Status, result.Applied, result.SkippedStale, result.Warnings})
+		TokenRecords int      `json:"token_records"`
+	}{result.Status, result.Applied, result.SkippedStale, result.Warnings, result.TokenRecords})
 }
 
 func writeDecodeError(w http.ResponseWriter, err error) {
