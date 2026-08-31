@@ -15,6 +15,7 @@ import (
 
 type stubStore struct {
 	ventures []store.DashboardVenture
+	spend    store.DashboardSpend
 	lastSync *time.Time
 	result   store.ApplyResult
 }
@@ -25,6 +26,10 @@ func (s *stubStore) ApplySnapshot(_ context.Context, _ store.Snapshot, _ []store
 
 func (s *stubStore) ListVentures(context.Context) ([]store.DashboardVenture, error) {
 	return s.ventures, nil
+}
+
+func (s *stubStore) DashboardSpend(context.Context) (store.DashboardSpend, error) {
+	return s.spend, nil
 }
 
 func (s *stubStore) LastSync(context.Context) (*time.Time, error) {
@@ -167,6 +172,89 @@ func TestDashboardShowsEmptyVentureList(t *testing.T) {
 
 	if !strings.Contains(body, "No ventures have arrived yet.") {
 		t.Fatalf("page missing empty-list state: %s", body)
+	}
+}
+
+func TestDashboardShowsHonestNoSpendState(t *testing.T) {
+	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
+		{Title: "Unmeasured", Field: "development", Status: "in_progress"},
+	}}).Body.String()
+
+	if !strings.Contains(body, "No spend data received yet") {
+		t.Fatalf("page missing no-spend state: %s", body)
+	}
+	if strings.Contains(body, `class="spend-grid"`) || strings.Contains(body, `class="venture-spend"`) {
+		t.Fatalf("page rendered zero figures for absent spend: %s", body)
+	}
+}
+
+func TestDashboardLabelsEveryTokenFigureAndRendersSpendStates(t *testing.T) {
+	first := time.Date(2026, 8, 25, 10, 30, 0, 0, time.UTC)
+	company := &store.CompanyTokens{
+		TokenAggregate: store.TokenAggregate{
+			Runs: 3, BackfilledRuns: 2, Total: 4_000_000, Fresh: 3_000_000,
+			CostUSD: 1.25, CostMeasuredRuns: 1,
+		},
+		LiveRuns: 1, UnattributedRuns: 1, UnattributedTotal: 1_500_000, UnattributedFresh: 1_000_000,
+	}
+	body := renderDashboard(t, &stubStore{
+		ventures: []store.DashboardVenture{
+			{
+				Title: "Largest", Field: "development", Status: "in_progress",
+				Tokens: &store.TokenAggregate{Runs: 2, BackfilledRuns: 1, Total: 2_500_000, Fresh: 2_000_000, CostUSD: .75, CostMeasuredRuns: 1},
+			},
+			{
+				Title: "Half size", Field: "other", Status: "abandoned",
+				Tokens: &store.TokenAggregate{Runs: 1, Total: 1_250_000, Fresh: 1_000_000},
+			},
+			{Title: "Predates ledger", Field: "other", Status: "abandoned"},
+		},
+		spend: store.DashboardSpend{
+			Company: company, FirstTS: &first, Records: 3,
+			Roles: []store.RoleTokens{
+				{Role: "developer", TokenAggregate: store.TokenAggregate{Runs: 2, BackfilledRuns: 1, Fresh: 2_000_000}},
+				{Role: "ceo", TokenAggregate: store.TokenAggregate{Runs: 1, Fresh: 1_000_000}},
+			},
+			Unmatched: []store.VentureTokens{{
+				Slug: "orphan-ledger-row", TokenAggregate: store.TokenAggregate{Runs: 1, BackfilledRuns: 1, Fresh: 250_000},
+			}},
+		},
+	}).Body.String()
+
+	figurePattern := regexp.MustCompile(`<span class="token-figure"><span class="token-value">(?:<span class="approx" aria-label="approximately">≈</span>)?[^<]+</span> <span class="token-label">(?:fresh|fresh tokens|including cache reads)</span></span>`)
+	if got, want := len(figurePattern.FindAllString(body, -1)), strings.Count(body, `class="token-figure"`); got != want || want == 0 {
+		t.Fatalf("labelled token figures = %d of %d: %s", got, want, body)
+	}
+	for _, required := range []string{
+		`class="spend-cell spend-cell-fresh"`, "fresh tokens", "including cache reads",
+		"33.3%", "orchestration (CEO) — not attributable to any venture",
+		"$1.25", "measured across 1 of 3 runs — opencode only; codex and Claude report no price",
+		"orphan-ledger-row", "Spend by agent", ">ceo<",
+		"≈ reconstructed by matching engine sessions", "orchestration at ~69% of all spend to date",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("page missing %q: %s", required, body)
+		}
+	}
+	if got := strings.Count(body, `class="venture-spend"`); got != 2 {
+		t.Fatalf("venture spend rows = %d, want only two measured ventures: %s", got, body)
+	}
+	if !strings.Contains(body, `style="width: 50.0%"`) || !strings.Contains(body, `style="width: 100.0%"`) {
+		t.Fatalf("page missing proportional bar widths: %s", body)
+	}
+}
+
+func TestTokenFormattingIsCompactAndLabelHelperOwnsMarkup(t *testing.T) {
+	for value, want := range map[int64]string{
+		999: "999", 1_000: "1k", 7_750_000: "7.75M", 45_500_000: "45.5M", 3_180_000_000: "3.18B",
+	} {
+		if got := formatTokenCount(value); got != want {
+			t.Errorf("formatTokenCount(%d) = %q, want %q", value, got, want)
+		}
+	}
+	markup := string(renderTokenFigure(tokenFigure(12_000, "fresh", true)))
+	if markup != `<span class="token-figure"><span class="token-value"><span class="approx" aria-label="approximately">≈</span>12k</span> <span class="token-label">fresh</span></span>` {
+		t.Fatalf("token helper markup = %s", markup)
 	}
 }
 

@@ -326,20 +326,24 @@ type DashboardVenture struct {
 	RepoURL          string
 	DesignURL        string
 	CreatedAt        *time.Time
+	Tokens           *TokenAggregate
 }
 
 func (s *Store) ListVentures(ctx context.Context) ([]DashboardVenture, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT slug, title, field, status, stage, kind, description, monetization,
-		       abandoned_reason, abandoned_at_stage, url, repo_url, design_url, created_at
-		FROM ventures
-		WHERE hidden = false
-		ORDER BY CASE status
+		SELECT v.slug, v.title, v.field, v.status, v.stage, v.kind, v.description, v.monetization,
+		       v.abandoned_reason, v.abandoned_at_stage, v.url, v.repo_url, v.design_url, v.created_at,
+		       t.runs, t.failed_runs, t.backfilled_runs, t.total, t.fresh,
+		       t.cost_usd, t.cost_measured_runs, t.seconds
+		FROM ventures v
+		LEFT JOIN venture_tokens t ON v.slug = t.slug
+		WHERE v.hidden = false
+		ORDER BY CASE v.status
 			WHEN 'in_progress' THEN 1
 			WHEN 'deployed' THEN 2
 			WHEN 'abandoned' THEN 3
 			ELSE 4
-		END, created_at DESC NULLS LAST, slug`)
+		END, v.created_at DESC NULLS LAST, v.slug`)
 	if err != nil {
 		return nil, fmt.Errorf("query ventures: %w", err)
 	}
@@ -351,10 +355,15 @@ func (s *Store) ListVentures(ctx context.Context) ([]DashboardVenture, error) {
 		var stage, kind, description, monetization sql.NullString
 		var reason, reasonStage, liveURL, repoURL, designURL sql.NullString
 		var created sql.NullTime
+		var runs, failedRuns, backfilledRuns, total, fresh sql.NullInt64
+		var costUSD sql.NullFloat64
+		var costMeasuredRuns, seconds sql.NullInt64
 		if err := rows.Scan(
 			&venture.Slug, &venture.Title, &venture.Field, &venture.Status,
 			&stage, &kind, &description, &monetization, &reason, &reasonStage,
 			&liveURL, &repoURL, &designURL, &created,
+			&runs, &failedRuns, &backfilledRuns, &total, &fresh, &costUSD,
+			&costMeasuredRuns, &seconds,
 		); err != nil {
 			return nil, fmt.Errorf("scan venture: %w", err)
 		}
@@ -370,12 +379,114 @@ func (s *Store) ListVentures(ctx context.Context) ([]DashboardVenture, error) {
 		if created.Valid {
 			venture.CreatedAt = &created.Time
 		}
+		if runs.Valid {
+			venture.Tokens = &TokenAggregate{
+				Runs:             int(runs.Int64),
+				FailedRuns:       int(failedRuns.Int64),
+				BackfilledRuns:   int(backfilledRuns.Int64),
+				Total:            total.Int64,
+				Fresh:            fresh.Int64,
+				CostUSD:          costUSD.Float64,
+				CostMeasuredRuns: int(costMeasuredRuns.Int64),
+				Seconds:          seconds.Int64,
+			}
+		}
 		ventures = append(ventures, venture)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate ventures: %w", err)
 	}
 	return ventures, nil
+}
+
+type DashboardSpend struct {
+	Company   *CompanyTokens
+	FirstTS   *time.Time
+	LastTS    *time.Time
+	Records   int
+	Roles     []RoleTokens
+	Unmatched []VentureTokens
+}
+
+func (s *Store) DashboardSpend(ctx context.Context) (DashboardSpend, error) {
+	spend := DashboardSpend{Company: &CompanyTokens{}}
+	var firstTS, lastTS sql.NullTime
+	err := s.pool.QueryRow(ctx, `
+		SELECT records, first_ts, last_ts, runs, failed_runs, backfilled_runs, live_runs,
+		       total, fresh, unattributed_runs, unattributed_total, unattributed_fresh,
+		       cost_usd, cost_measured_runs, seconds
+		FROM company_tokens WHERE id = true`).Scan(
+		&spend.Records, &firstTS, &lastTS,
+		&spend.Company.Runs, &spend.Company.FailedRuns, &spend.Company.BackfilledRuns,
+		&spend.Company.LiveRuns, &spend.Company.Total, &spend.Company.Fresh,
+		&spend.Company.UnattributedRuns, &spend.Company.UnattributedTotal,
+		&spend.Company.UnattributedFresh, &spend.Company.CostUSD,
+		&spend.Company.CostMeasuredRuns, &spend.Company.Seconds,
+	)
+	if err == pgx.ErrNoRows {
+		spend.Company = nil
+		return spend, nil
+	}
+	if err != nil {
+		return DashboardSpend{}, fmt.Errorf("query company tokens: %w", err)
+	}
+	if firstTS.Valid {
+		spend.FirstTS = &firstTS.Time
+	}
+	if lastTS.Valid {
+		spend.LastTS = &lastTS.Time
+	}
+
+	roleRows, err := s.pool.Query(ctx, `
+		SELECT role, runs, failed_runs, backfilled_runs, total, fresh,
+		       cost_usd, cost_measured_runs, seconds
+		FROM role_tokens
+		ORDER BY fresh DESC, role`)
+	if err != nil {
+		return DashboardSpend{}, fmt.Errorf("query role tokens: %w", err)
+	}
+	defer roleRows.Close()
+	for roleRows.Next() {
+		var role RoleTokens
+		if err := roleRows.Scan(
+			&role.Role, &role.Runs, &role.FailedRuns, &role.BackfilledRuns,
+			&role.Total, &role.Fresh, &role.CostUSD, &role.CostMeasuredRuns, &role.Seconds,
+		); err != nil {
+			return DashboardSpend{}, fmt.Errorf("scan role tokens: %w", err)
+		}
+		spend.Roles = append(spend.Roles, role)
+	}
+	if err := roleRows.Err(); err != nil {
+		return DashboardSpend{}, fmt.Errorf("iterate role tokens: %w", err)
+	}
+
+	// Hidden ventures remain included in the laptop-computed company aggregate.
+	// They are intentionally neither visible cards nor unmatched bookkeeping rows.
+	unmatchedRows, err := s.pool.Query(ctx, `
+		SELECT t.slug, t.runs, t.failed_runs, t.backfilled_runs, t.total, t.fresh,
+		       t.cost_usd, t.cost_measured_runs, t.seconds
+		FROM venture_tokens t
+		LEFT JOIN ventures v ON v.slug = t.slug
+		WHERE v.slug IS NULL
+		ORDER BY t.fresh DESC, t.slug`)
+	if err != nil {
+		return DashboardSpend{}, fmt.Errorf("query unmatched venture tokens: %w", err)
+	}
+	defer unmatchedRows.Close()
+	for unmatchedRows.Next() {
+		var venture VentureTokens
+		if err := unmatchedRows.Scan(
+			&venture.Slug, &venture.Runs, &venture.FailedRuns, &venture.BackfilledRuns,
+			&venture.Total, &venture.Fresh, &venture.CostUSD, &venture.CostMeasuredRuns, &venture.Seconds,
+		); err != nil {
+			return DashboardSpend{}, fmt.Errorf("scan unmatched venture tokens: %w", err)
+		}
+		spend.Unmatched = append(spend.Unmatched, venture)
+	}
+	if err := unmatchedRows.Err(); err != nil {
+		return DashboardSpend{}, fmt.Errorf("iterate unmatched venture tokens: %w", err)
+	}
+	return spend, nil
 }
 
 func (s *Store) LastSync(ctx context.Context) (*time.Time, error) {

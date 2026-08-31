@@ -443,6 +443,66 @@ func TestTokenBlockReplacesAllAggregateTables(t *testing.T) {
 	}
 }
 
+func TestDashboardSpendJoinsVisibleVenturesAndSurfacesOnlyTrueOrphans(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	generatedAt := time.Now().Add(-time.Minute).UTC()
+	visible := testVenture("visible", "in_progress")
+	hidden := testVenture("hidden", "abandoned")
+	unmeasured := testVenture("unmeasured", "deployed")
+	block := testTokenBlock(generatedAt)
+	block.ByVenture[0].Slug = visible.Slug
+	block.ByVenture = append(block.ByVenture,
+		VentureTokens{Slug: hidden.Slug, TokenAggregate: TokenAggregate{Runs: 1, Total: 50, Fresh: 45}},
+		VentureTokens{Slug: "orphan", TokenAggregate: TokenAggregate{Runs: 1, Total: 25, Fresh: 20}},
+	)
+	block.Company.Runs = 5
+	block.Company.Total = 375
+	block.Company.Fresh = 335
+	snapshot := Snapshot{
+		SnapshotID: "dashboard-spend", GeneratedAt: generatedAt,
+		Ventures: []Venture{visible, hidden, unmeasured}, Tokens: block,
+	}
+	if _, err := s.ApplySnapshot(context.Background(), snapshot, snapshot.Ventures, []string{visible.Slug, hidden.Slug, unmeasured.Slug}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), "UPDATE ventures SET hidden = true WHERE slug = 'hidden'"); err != nil {
+		t.Fatal(err)
+	}
+
+	ventures, err := s.ListVentures(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ventures) != 2 {
+		t.Fatalf("visible ventures = %#v", ventures)
+	}
+	bySlug := make(map[string]DashboardVenture, len(ventures))
+	for _, venture := range ventures {
+		bySlug[venture.Slug] = venture
+	}
+	if bySlug[visible.Slug].Tokens == nil || bySlug[visible.Slug].Tokens.Fresh != 180 {
+		t.Fatalf("visible token join = %#v", bySlug[visible.Slug].Tokens)
+	}
+	if bySlug[unmeasured.Slug].Tokens != nil {
+		t.Fatalf("unmeasured venture has tokens = %#v", bySlug[unmeasured.Slug].Tokens)
+	}
+
+	spend, err := s.DashboardSpend(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spend.Company == nil || spend.Company.Fresh != 335 || spend.Records != 3 {
+		t.Fatalf("company spend = %#v", spend)
+	}
+	if len(spend.Roles) != 2 || spend.Roles[0].Role != "developer" {
+		t.Fatalf("roles = %#v", spend.Roles)
+	}
+	if len(spend.Unmatched) != 1 || spend.Unmatched[0].Slug != "orphan" {
+		t.Fatalf("unmatched = %#v; hidden venture must not be reported as unmatched", spend.Unmatched)
+	}
+}
+
 func TestTokenToleranceRetainsExistingRows(t *testing.T) {
 	resetDatabase(t)
 	s := New(testPool)

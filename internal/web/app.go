@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ var webFiles embed.FS
 type DataStore interface {
 	ApplySnapshot(context.Context, store.Snapshot, []store.Venture, []string, []string) (store.ApplyResult, error)
 	ListVentures(context.Context) ([]store.DashboardVenture, error)
+	DashboardSpend(context.Context) (store.DashboardSpend, error)
 	LastSync(context.Context) (*time.Time, error)
 }
 
@@ -48,7 +50,8 @@ func New(dataStore DataStore, ingestToken string) (*App, error) {
 	stylesheetPath := fmt.Sprintf("/static/app.%x.css", stylesheetHash[:6])
 
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
-		"paragraphs": paragraphs,
+		"paragraphs":  paragraphs,
+		"tokenFigure": renderTokenFigure,
 	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -102,13 +105,74 @@ func robots(w http.ResponseWriter, _ *http.Request) {
 }
 
 type pageData struct {
-	Ventures       []store.DashboardVenture
+	Ventures       []ventureView
+	Spend          companySpendView
+	Agents         []agentSpendView
 	LastSync       string
 	StylesheetPath string
 }
 
+type tokenFigureView struct {
+	Value       string
+	Label       string
+	Approximate bool
+}
+
+type ventureView struct {
+	Title            string
+	Field            string
+	Status           string
+	Stage            string
+	Kind             string
+	Description      string
+	Monetization     string
+	AbandonedReason  string
+	AbandonedAtStage string
+	URL              string
+	RepoURL          string
+	DesignURL        string
+	Spend            *ventureSpendView
+}
+
+type ventureSpendView struct {
+	Fresh    tokenFigureView
+	Total    tokenFigureView
+	Runs     string
+	Money    string
+	BarWidth template.CSS
+}
+
+type companySpendView struct {
+	HasData       bool
+	Meta          string
+	Fresh         tokenFigureView
+	Total         tokenFigureView
+	Orchestration string
+	Money         string
+	MoneyScope    string
+	Unmatched     []unmatchedSpendView
+}
+
+type unmatchedSpendView struct {
+	Slug  string
+	Fresh tokenFigureView
+	Runs  string
+}
+
+type agentSpendView struct {
+	Role     string
+	Fresh    tokenFigureView
+	Runs     string
+	BarWidth template.CSS
+}
+
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	ventures, err := a.store.ListVentures(r.Context())
+	if err != nil {
+		http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
+		return
+	}
+	spend, err := a.store.DashboardSpend(r.Context())
 	if err != nil {
 		http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
 		return
@@ -122,13 +186,161 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	w.Header().Set("X-Robots-Tag", "noindex")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.template.ExecuteTemplate(w, "index.html", pageData{
-		Ventures:       ventures,
-		LastSync:       syncLabel(a.now(), lastSync),
-		StylesheetPath: a.stylesheetPath,
-	}); err != nil {
+	view := buildPageData(ventures, spend)
+	view.LastSync = syncLabel(a.now(), lastSync)
+	view.StylesheetPath = a.stylesheetPath
+	if err := a.template.ExecuteTemplate(w, "index.html", view); err != nil {
 		return
 	}
+}
+
+func buildPageData(ventures []store.DashboardVenture, spend store.DashboardSpend) pageData {
+	view := pageData{Ventures: make([]ventureView, 0, len(ventures))}
+	var maxVentureFresh int64
+	for _, venture := range ventures {
+		if venture.Tokens != nil && venture.Tokens.Fresh > maxVentureFresh {
+			maxVentureFresh = venture.Tokens.Fresh
+		}
+	}
+	for _, venture := range ventures {
+		item := ventureView{
+			Title: venture.Title, Field: venture.Field, Status: venture.Status,
+			Stage: venture.Stage, Kind: venture.Kind, Description: venture.Description,
+			Monetization: venture.Monetization, AbandonedReason: venture.AbandonedReason,
+			AbandonedAtStage: venture.AbandonedAtStage, URL: venture.URL,
+			RepoURL: venture.RepoURL, DesignURL: venture.DesignURL,
+		}
+		if venture.Tokens != nil {
+			item.Spend = &ventureSpendView{
+				Fresh:    tokenFigure(venture.Tokens.Fresh, "fresh", venture.Tokens.BackfilledRuns > 0),
+				Total:    tokenFigure(venture.Tokens.Total, "including cache reads", venture.Tokens.BackfilledRuns > 0),
+				Runs:     formatRuns(venture.Tokens.Runs),
+				BarWidth: barWidth(venture.Tokens.Fresh, maxVentureFresh),
+			}
+			if venture.Tokens.CostMeasuredRuns > 0 {
+				item.Spend.Money = fmt.Sprintf(
+					"$%.2f measured across %d of %d runs — opencode only",
+					venture.Tokens.CostUSD, venture.Tokens.CostMeasuredRuns, venture.Tokens.Runs,
+				)
+			}
+		}
+		view.Ventures = append(view.Ventures, item)
+	}
+
+	if spend.Company == nil {
+		return view
+	}
+	company := spend.Company
+	view.Spend.HasData = true
+	view.Spend.Meta = spendMeta(spend.FirstTS, spend.Records, company.BackfilledRuns)
+	view.Spend.Fresh = tokenFigure(company.Fresh, "fresh tokens", company.BackfilledRuns > 0)
+	view.Spend.Total = tokenFigure(company.Total, "including cache reads", company.BackfilledRuns > 0)
+	view.Spend.Orchestration = orchestrationPercent(company.UnattributedFresh, company.Fresh)
+	view.Spend.Money = fmt.Sprintf("$%.2f", company.CostUSD)
+	view.Spend.MoneyScope = fmt.Sprintf(
+		"measured across %d of %d runs — opencode only; codex and Claude report no price",
+		company.CostMeasuredRuns, company.Runs,
+	)
+	for _, unmatched := range spend.Unmatched {
+		view.Spend.Unmatched = append(view.Spend.Unmatched, unmatchedSpendView{
+			Slug:  unmatched.Slug,
+			Fresh: tokenFigure(unmatched.Fresh, "fresh", unmatched.BackfilledRuns > 0),
+			Runs:  formatRuns(unmatched.Runs),
+		})
+	}
+
+	var maxRoleFresh int64
+	for _, role := range spend.Roles {
+		if role.Fresh > maxRoleFresh {
+			maxRoleFresh = role.Fresh
+		}
+	}
+	for _, role := range spend.Roles {
+		view.Agents = append(view.Agents, agentSpendView{
+			Role:  role.Role,
+			Fresh: tokenFigure(role.Fresh, "fresh", role.BackfilledRuns > 0),
+			Runs:  formatRuns(role.Runs), BarWidth: barWidth(role.Fresh, maxRoleFresh),
+		})
+	}
+	return view
+}
+
+func tokenFigure(value int64, label string, approximate bool) tokenFigureView {
+	return tokenFigureView{Value: formatTokenCount(value), Label: label, Approximate: approximate}
+}
+
+func renderTokenFigure(figure tokenFigureView) template.HTML {
+	marker := ""
+	if figure.Approximate {
+		marker = `<span class="approx" aria-label="approximately">≈</span>`
+	}
+	return template.HTML(`<span class="token-figure"><span class="token-value">` + marker +
+		html.EscapeString(figure.Value) + `</span> ` +
+		`<span class="token-label">` + html.EscapeString(figure.Label) + `</span></span>`)
+}
+
+func formatTokenCount(value int64) string {
+	abs := value
+	if abs < 0 {
+		abs = -abs
+	}
+	for _, unit := range []struct {
+		threshold int64
+		suffix    string
+	}{{1_000_000_000, "B"}, {1_000_000, "M"}, {1_000, "k"}} {
+		if abs >= unit.threshold {
+			scaled := float64(value) / float64(unit.threshold)
+			precision := 2
+			if scaled >= 100 || scaled <= -100 {
+				precision = 0
+			} else if scaled >= 10 || scaled <= -10 {
+				precision = 1
+			}
+			formatted := strconv.FormatFloat(scaled, 'f', precision, 64)
+			if strings.Contains(formatted, ".") {
+				formatted = strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
+			}
+			return formatted + unit.suffix
+		}
+	}
+	return strconv.FormatInt(value, 10)
+}
+
+func formatRuns(runs int) string {
+	if runs == 1 {
+		return "1 run"
+	}
+	return strconv.Itoa(runs) + " runs"
+}
+
+func spendMeta(firstTS *time.Time, records, approximate int) string {
+	since := "since ledger start"
+	if firstTS != nil {
+		since = "since " + firstTS.Format("2 Jan 2006")
+	}
+	meta := fmt.Sprintf("%s · %s", since, formatRuns(records))
+	if approximate > 0 {
+		meta += fmt.Sprintf(" · ≈ %d approximate", approximate)
+	}
+	return meta
+}
+
+func orchestrationPercent(unattributed, company int64) string {
+	if company <= 0 {
+		return "—"
+	}
+	return strconv.FormatFloat(float64(unattributed)*100/float64(company), 'f', 1, 64) + "%"
+}
+
+func barWidth(value, maximum int64) template.CSS {
+	if maximum <= 0 || value <= 0 {
+		return "0%"
+	}
+	percent := float64(value) * 100 / float64(maximum)
+	if percent > 100 {
+		percent = 100
+	}
+	return template.CSS(strconv.FormatFloat(percent, 'f', 1, 64) + "%")
 }
 
 func syncLabel(now time.Time, lastSync *time.Time) string {
