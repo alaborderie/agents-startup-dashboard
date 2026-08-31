@@ -24,6 +24,7 @@
     "Liberation Mono", monospace;
 
   --t-figure: clamp(1.75rem, 1.35rem + 1.6vw, 2.25rem);
+  --t-figure-secondary: clamp(1.26rem, .972rem + 1.152vw, 1.62rem);
   --t-h1: clamp(1.75rem, 1.3rem + 2vw, 2.5rem);
   --t-h2: 1.125rem;
   --t-title: clamp(1.0625rem, 1rem + .3vw, 1.1875rem);
@@ -179,7 +180,7 @@ h1 {
 .token-value,
 .spend-value {
   color: var(--ink-2);
-  font-size: calc(var(--t-figure) * .72);
+  font-size: var(--t-figure-secondary);
   line-height: 1.05;
   letter-spacing: -.01em;
 }

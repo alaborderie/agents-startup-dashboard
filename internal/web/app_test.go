@@ -309,8 +309,8 @@ func TestPageGutterUsesBroadlySupportedCalc(t *testing.T) {
 	if !strings.Contains(css, "calc(100% - var(--gutter) - var(--gutter))") {
 		t.Fatal("stylesheet does not preserve page gutters with additive calc syntax")
 	}
-	if strings.Contains(css, "2 * var(--gutter)") {
-		t.Fatal("stylesheet uses CSS typed multiplication for the page gutter")
+	if strings.Contains(css, "calc(var(--t-figure) *") {
+		t.Fatal("stylesheet uses CSS typed multiplication, which is not broadly supported")
 	}
 }
 
