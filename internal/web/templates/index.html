@@ -5,52 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <title>Agent startup dashboard</title>
-  <style>
-    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; color: #20231f; background: #f3f1ea; }
-    * { box-sizing: border-box; }
-    body { margin: 0; }
-    main { width: min(1180px, calc(100% - 28px)); margin: 0 auto; padding: 36px 0 64px; }
-    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
-    h1 { margin: 0; font-family: Georgia, serif; font-size: clamp(2rem, 6vw, 4rem); font-weight: 500; letter-spacing: -.04em; }
-    .sync { margin: 0 0 7px; color: #60665e; white-space: nowrap; }
-    table { width: 100%; border-collapse: separate; border-spacing: 0 10px; }
-    th { padding: 0 14px 6px; color: #687067; font-size: .72rem; text-align: left; text-transform: uppercase; letter-spacing: .08em; }
-    td { padding: 18px 14px; vertical-align: top; background: #fff; border-top: 1px solid #dcded7; border-bottom: 1px solid #dcded7; }
-    td:first-child { border-left: 1px solid #dcded7; border-radius: 10px 0 0 10px; }
-    td:last-child { border-right: 1px solid #dcded7; border-radius: 0 10px 10px 0; }
-    .title { min-width: 150px; font-size: 1.05rem; font-weight: 700; }
-    .stage { display: block; margin-top: 5px; color: #737970; font-size: .76rem; }
-    .field { color: #525950; }
-    .status { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
-    .status-in_progress { color: #075b45; background: #d7f2e9; }
-    .status-design_review { color: #674408; background: #fff0c2; }
-    .status-deployed { color: #174f7b; background: #dcecf8; }
-    .status-abandoned { color: #7e2822; background: #fae2df; }
-    .description { max-width: 460px; line-height: 1.48; }
-    .description p { margin: 0 0 8px; }
-    .description p:last-child { margin-bottom: 0; }
-    .monetization { display: block; margin-top: 10px; color: #5c635a; font-size: .86rem; }
-    .reason { margin-top: 13px; padding: 10px 12px; color: #65231f; background: #fff2ef; border-left: 3px solid #bd5148; font-weight: 650; }
-    .reason-stage { display: block; margin-bottom: 3px; font-size: .73rem; text-transform: uppercase; letter-spacing: .05em; }
-    .missing-reason { color: #8c261e; text-decoration: underline; text-decoration-thickness: 2px; }
-    a { color: #185b48; overflow-wrap: anywhere; text-underline-offset: 3px; }
-    .links a { display: block; margin-bottom: 8px; }
-    .empty { padding: 40px 24px; background: #fff; border: 1px solid #dcded7; border-radius: 10px; text-align: center; }
-    @media (max-width: 639px) {
-      main { width: min(100% - 20px, 560px); padding-top: 24px; }
-      header { display: block; }
-      .sync { margin-top: 10px; }
-      table, tbody, tr, td { display: block; width: 100%; }
-      thead { display: none; }
-      table { border-spacing: 0; }
-      tr { margin-bottom: 14px; padding: 14px; background: #fff; border: 1px solid #dcded7; border-radius: 12px; }
-      td { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px; padding: 9px 0; border: 0; background: transparent; }
-      td::before { content: attr(data-label); color: #777d75; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
-      td:first-child, td:last-child { border: 0; }
-      .title { min-width: 0; font-size: 1.12rem; }
-      .description { max-width: none; }
-    }
-  </style>
+  <link rel="stylesheet" href="{{.StylesheetPath}}">
 </head>
 <body>
   <main>
@@ -59,35 +14,37 @@
       <p class="sync">{{.LastSync}}</p>
     </header>
     {{if .Ventures}}
-    <table>
-      <thead><tr><th>Idea</th><th>Field</th><th>Status</th><th>Description</th><th>Links</th></tr></thead>
-      <tbody>
+    <ul class="ventures">
       {{range .Ventures}}
-        <tr>
-          <td data-label="Idea"><span class="title">{{.Title}}</span>{{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}</td>
-          <td data-label="Field"><span class="field">{{.Field}}</span></td>
-          <td data-label="Status">
+        <li>
+          <article class="venture">
+            <div class="rail">
+              <h2 class="title">{{.Title}}</h2>
+              {{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}
+              <span class="field">{{.Field}}</span>
             {{if eq .Stage "DESIGN_REVIEW"}}<span class="status status-design_review">DESIGN_REVIEW</span>{{else}}<span class="status status-{{.Status}}">{{.Status}}</span>{{end}}
-          </td>
-          <td data-label="Description" class="description">
-            {{range paragraphs .Description}}<p>{{.}}</p>{{end}}
-            {{if and .Monetization (ne .Kind "internal")}}<span class="monetization"><strong>Monetization:</strong> {{.Monetization}}</span>{{end}}
-            {{if eq .Status "abandoned"}}
-              <div class="reason">
-                {{if .AbandonedAtStage}}<span class="reason-stage">Killed at {{.AbandonedAtStage}}</span>{{end}}
-                {{if .AbandonedReason}}{{.AbandonedReason}}{{else}}<span class="missing-reason">reason not recorded</span>{{end}}
+            </div>
+            <div class="body">
+              <div class="description">
+                {{range paragraphs .Description}}<p>{{.}}</p>{{end}}
+                {{if and .Monetization (ne .Kind "internal")}}<span class="monetization"><strong>Monetization:</strong> {{.Monetization}}</span>{{end}}
+                {{if eq .Status "abandoned"}}
+                  <div class="reason">
+                    {{if .AbandonedAtStage}}<span class="reason-stage">Killed at {{.AbandonedAtStage}}</span>{{end}}
+                    {{if .AbandonedReason}}{{.AbandonedReason}}{{else}}<span class="missing-reason">reason not recorded</span>{{end}}
+                  </div>
+                {{end}}
               </div>
-            {{end}}
-          </td>
-          <td data-label="Links" class="links">
-            {{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{end}}
-            {{if and (eq .Stage "DESIGN_REVIEW") .DesignURL}}<a href="{{.DesignURL}}" target="_blank" rel="noopener noreferrer">Review design</a>{{end}}
-            {{if and .RepoURL (ne .Status "abandoned")}}<a href="{{.RepoURL}}">{{.RepoURL}}</a>{{end}}
-          </td>
-        </tr>
+              <div class="links">
+                {{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{end}}
+                {{if and (eq .Stage "DESIGN_REVIEW") .DesignURL}}<a href="{{.DesignURL}}" target="_blank" rel="noopener noreferrer">Review design</a>{{end}}
+                {{if and .RepoURL (ne .Status "abandoned")}}<a href="{{.RepoURL}}">{{.RepoURL}}</a>{{end}}
+              </div>
+            </div>
+          </article>
+        </li>
       {{end}}
-      </tbody>
-    </table>
+    </ul>
     {{else}}
       <div class="empty">No ventures have arrived yet.</div>
     {{end}}

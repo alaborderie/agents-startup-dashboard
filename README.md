@@ -75,8 +75,9 @@ tick fully restores it.
 ## Stack
 
 - Go 1.27, stdlib `net/http` (`http.ServeMux` method+path patterns). No router.
-- `html/template` + `embed.FS`. CSS inline in a `<style>` block. **Zero JS, no
-  build step, no bundler.** Table above 640px, stacked cards below.
+- `html/template` + `embed.FS`. The content-hashed stylesheet is embedded in the
+  binary and the dashboard uses one card layout at every width. **Zero JS, no
+  build step, no bundler.**
 - Postgres via `jackc/pgx/v5`, pool max 4.
 - **Schema migrations are embedded in the binary and run in-process at startup**,
   idempotently. They are deliberately *not* a Postgres `initdb` ConfigMap: that

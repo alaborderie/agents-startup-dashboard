@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +170,46 @@ func TestDashboardShowsEmptyVentureList(t *testing.T) {
 	}
 }
 
+func TestDashboardUsesOneCardLayoutAtEveryWidth(t *testing.T) {
+	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
+		{Title: "First venture", Field: "development", Status: "in_progress"},
+		{Title: "Second venture", Field: "other", Status: "deployed"},
+	}}).Body.String()
+
+	if got := strings.Count(body, `<article class="venture">`); got != 2 {
+		t.Fatalf("venture card count = %d body = %s", got, body)
+	}
+	for _, obsolete := range []string{"<table", "<thead", "<tbody", "<tr", "<th", "<td", "data-label="} {
+		if strings.Contains(body, obsolete) {
+			t.Fatalf("page contains obsolete table markup %q: %s", obsolete, body)
+		}
+	}
+}
+
+func TestCardStylesKeepNarrowViewportsFromOverflowing(t *testing.T) {
+	stylesheet, err := webFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(stylesheet)
+	for _, required := range []string{
+		"grid-template-columns: minmax(0, 1fr)",
+		"grid-template-columns: 200px minmax(0, 1fr)",
+		"min-height: 44px",
+		"overflow-wrap: anywhere",
+		"a:focus-visible",
+	} {
+		if !strings.Contains(css, required) {
+			t.Errorf("stylesheet missing narrow-viewport guard %q", required)
+		}
+	}
+	for _, obsolete := range []string{"white-space: nowrap", "table, tbody", "td::before"} {
+		if strings.Contains(css, obsolete) {
+			t.Errorf("stylesheet contains obsolete overflow hazard %q", obsolete)
+		}
+	}
+}
+
 func TestDashboardShowsNeverSynced(t *testing.T) {
 	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
 		{Title: "Minimal", Field: "other", Status: "in_progress"},
@@ -194,6 +235,55 @@ func TestDashboardResponseMetadata(t *testing.T) {
 	}
 	if got := response.Header().Get("X-Robots-Tag"); got != "noindex" {
 		t.Fatalf("X-Robots-Tag = %q", got)
+	}
+}
+
+func TestDashboardServesContentHashedStylesheet(t *testing.T) {
+	app := newTestApp(t, &stubStore{})
+	handler := app.Handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	body := response.Body.String()
+	if got := strings.Count(body, `<link rel="stylesheet"`); got != 1 {
+		t.Fatalf("stylesheet link count = %d body = %s", got, body)
+	}
+	if strings.Contains(body, "<style") {
+		t.Fatalf("page contains inline style element: %s", body)
+	}
+	match := regexp.MustCompile(`href="(/static/app\.[0-9a-f]{8,}\.css)"`).FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("page missing content-hashed stylesheet path: %s", body)
+	}
+
+	stylesheet := httptest.NewRecorder()
+	handler.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, match[1], nil))
+	if stylesheet.Code != http.StatusOK {
+		t.Fatalf("stylesheet status = %d body = %s", stylesheet.Code, stylesheet.Body.String())
+	}
+	if got := stylesheet.Header().Get("Content-Type"); got != "text/css; charset=utf-8" {
+		t.Fatalf("stylesheet Content-Type = %q", got)
+	}
+	if got := stylesheet.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("stylesheet Cache-Control = %q", got)
+	}
+	if !strings.Contains(stylesheet.Body.String(), ".status-abandoned") {
+		t.Fatalf("stylesheet missing known selector: %s", stylesheet.Body.String())
+	}
+}
+
+func TestDashboardRejectsUnknownStaticPaths(t *testing.T) {
+	handler := newTestApp(t, &stubStore{}).Handler()
+	for _, path := range []string{
+		"/static/app.deadbeef.css",
+		"/static/../app.go",
+		"/static/app.css",
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d body = %q", path, response.Code, response.Body.String())
+		}
 	}
 }
 
