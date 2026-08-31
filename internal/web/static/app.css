@@ -62,7 +62,7 @@ body {
 }
 
 main {
-  width: min(1120px, calc(100% - 2 * var(--gutter)));
+  width: min(1120px, calc(100% - var(--gutter) - var(--gutter)));
   margin-inline: auto;
   padding-block: var(--s-6) var(--s-8);
 }

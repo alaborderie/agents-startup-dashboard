@@ -210,6 +210,20 @@ func TestCardStylesKeepNarrowViewportsFromOverflowing(t *testing.T) {
 	}
 }
 
+func TestPageGutterUsesBroadlySupportedCalc(t *testing.T) {
+	stylesheet, err := webFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(stylesheet)
+	if !strings.Contains(css, "calc(100% - var(--gutter) - var(--gutter))") {
+		t.Fatal("stylesheet does not preserve page gutters with additive calc syntax")
+	}
+	if strings.Contains(css, "2 * var(--gutter)") {
+		t.Fatal("stylesheet uses CSS typed multiplication for the page gutter")
+	}
+}
+
 func TestDashboardShowsNeverSynced(t *testing.T) {
 	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
 		{Title: "Minimal", Field: "other", Status: "in_progress"},
