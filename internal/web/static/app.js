@@ -11,6 +11,8 @@
   var STALE_AFTER = 60; // seconds without a push before we stop trusting it
 
   var live = null;
+  var fetchedAt = 0; // local ms when the last good feed arrived
+  var ageAtFetch = 0; // server-reported age at that moment
   var selectedRunId = null;
   var tickHandle = null;
 
@@ -88,15 +90,27 @@
       })
       .then(function (state) {
         live = state;
+        fetchedAt = Date.now();
+        ageAtFetch = state.age_seconds || 0;
         render();
       })
       .catch(function () {
-        // Keep the last good state; the age counter will visibly decay it.
+        // Keep the last good state; currentAge() keeps decaying it locally.
       });
   }
 
+  // The server age is frozen at fetch time. If polling then fails, advance it
+  // locally so a stale feed cannot keep looking live forever.
+  function currentAge() {
+    if (!live) {
+      return 0;
+    }
+    var drift = fetchedAt ? Math.max(0, Math.floor((Date.now() - fetchedAt) / 1000)) : 0;
+    return ageAtFetch + drift;
+  }
+
   function isStale() {
-    return !live || (live.age_seconds || 0) > STALE_AFTER;
+    return !live || currentAge() > STALE_AFTER;
   }
 
   function runs() {
@@ -354,7 +368,7 @@
   function runSubtitle(run) {
     var label = engineLabel(run);
     if (isStale()) {
-      return label + " · feed stale, last seen " + (live.age_seconds || 0) + "s ago";
+      return label + " · feed stale, last seen " + currentAge() + "s ago";
     }
     return label + " · live";
   }
@@ -365,12 +379,12 @@
     }
     var cycle = typeof live.cycle === "number" ? "cycle " + live.cycle : "";
     if (isStale()) {
-      return (cycle ? cycle + " · " : "") + "feed stale (" + (live.age_seconds || 0) + "s)";
+      return (cycle ? cycle + " · " : "") + "feed stale (" + currentAge() + "s)";
     }
     if (live.tick_running) {
-      return (cycle ? cycle + " · " : "") + "tick running · updated " + (live.age_seconds || 0) + "s ago";
+      return (cycle ? cycle + " · " : "") + "tick running · updated " + currentAge() + "s ago";
     }
-    return (cycle ? cycle + " · " : "") + "tick idle · updated " + (live.age_seconds || 0) + "s ago";
+    return (cycle ? cycle + " · " : "") + "tick idle · updated " + currentAge() + "s ago";
   }
 
   function elapsedLabel(started) {

@@ -761,6 +761,10 @@ a:focus-visible {
   list-style: none;
 }
 
+.run-list[hidden] {
+  display: none;
+}
+
 .run-button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

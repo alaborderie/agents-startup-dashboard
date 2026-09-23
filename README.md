@@ -81,6 +81,14 @@ The same push-only rule governs the "running now" panel. While a tick runs,
 credential from each log tail before it leaves the laptop; the service renders
 what it is given and never reads the laptop's disk.
 
+**Treat every log tail as public.** `GET /live.json` is unauthenticated, so the
+redaction is the only thing standing between a worker's raw output and the open
+internet. The redactor is deliberately fail-closed (it drops long opaque blobs
+and any assignment to a credential-shaped name, and aligns the tail to a line
+boundary), but it is a heuristic, not a guarantee: do not run a worker whose
+output is genuinely confidential. The endpoint is `noindex`, `no-store`, bounded
+(64 runs, 64 KB per tail), and the panel is scoped to a personal dashboard.
+
 Unlike snapshot ingest, the live feed is a **replace-the-whole-set** write: every
 push deletes the current `live_runs` and inserts exactly what it carries. A push
 with no runs therefore clears the panel. `live_state` records one row with the

@@ -548,6 +548,12 @@ func (s *Store) ApplyLive(ctx context.Context, payload LivePayload) error {
 	}
 	defer tx.Rollback(ctx)
 
+	// Serialize concurrent pushes so two overlapping mirrors cannot interleave
+	// into a mixed set or race on a duplicate run_id.
+	if _, err := tx.Exec(ctx, "LOCK TABLE live_runs, live_state IN EXCLUSIVE MODE"); err != nil {
+		return fmt.Errorf("lock live tables: %w", err)
+	}
+
 	if _, err := tx.Exec(ctx, "DELETE FROM live_runs"); err != nil {
 		return fmt.Errorf("clear live runs: %w", err)
 	}
@@ -588,8 +594,16 @@ func (s *Store) Live(ctx context.Context) (LiveState, error) {
 	var state LiveState
 	state.Runs = []LiveRun{}
 
+	// Read the state row and the run set from one repeatable-read snapshot so a
+	// push landing between the two queries cannot mix generations.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return LiveState{}, fmt.Errorf("begin live read: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	var received sql.NullTime
-	err := s.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		"SELECT generated_at, cycle, tick_running, received_at FROM live_state WHERE id = true",
 	).Scan(&state.GeneratedAt, &state.Cycle, &state.TickRunning, &received)
 	if err == pgx.ErrNoRows {
@@ -606,7 +620,7 @@ func (s *Store) Live(ctx context.Context) (LiveState, error) {
 		state.AgeSeconds = age
 	}
 
-	rows, err := s.pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail
 		FROM live_runs
 		ORDER BY started_at ASC NULLS LAST, slug, role`)
@@ -626,6 +640,9 @@ func (s *Store) Live(ctx context.Context) (LiveState, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return LiveState{}, fmt.Errorf("iterate live runs: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LiveState{}, fmt.Errorf("commit live read: %w", err)
 	}
 	return state, nil
 }
