@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alaborderie/agents-startup-dashboard/internal/store"
 )
@@ -612,6 +613,24 @@ func TestIngestLiveValidatesTruncatesAndMirrorsSet(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"warnings"`) {
 		t.Fatalf("response lost warnings: %s", response.Body.String())
+	}
+}
+
+func TestIngestLiveTruncationPreservesUTF8(t *testing.T) {
+	dataStore := &stubStore{}
+	app := newTestApp(t, dataStore)
+	app.now = func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) }
+	request := httptest.NewRequest(http.MethodPost, "/ingest/live", strings.NewReader(
+		`{"generated_at":"2026-09-24T12:00:00Z","runs":[{"run_id":"a","slug":"alpha","role":"developer","log_tail":"`+
+			strings.Repeat("é", maxLogTail/2)+`a"}]}`))
+	request.Header.Set("Authorization", "Bearer fake-test-token")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %q", response.Code, response.Body.String())
+	}
+	if len(dataStore.appliedLive.Runs) != 1 || !utf8.ValidString(dataStore.appliedLive.Runs[0].LogTail) {
+		t.Fatal("truncation split a multi-byte character")
 	}
 }
 

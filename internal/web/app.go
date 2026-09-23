@@ -690,6 +690,9 @@ func validateLiveRuns(runs []store.LiveRun) ([]store.LiveRun, []string) {
 		}
 		if len(run.LogTail) > maxLogTail {
 			cut := run.LogTail[len(run.LogTail)-maxLogTail:]
+			for len(cut) > 0 && !utf8.RuneStart(cut[0]) {
+				cut = cut[1:]
+			}
 			run.LogTail = "[…]\n" + cut
 		}
 		if at, exists := seen[run.RunID]; exists {

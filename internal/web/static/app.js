@@ -59,6 +59,19 @@
         }
       }
     });
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      var step = event.target.closest(".step.is-running");
+      if (step) {
+        var run = runForStep(step);
+        if (run) {
+          event.preventDefault();
+          openRun(run.run_id);
+        }
+      }
+    });
 
     tickHandle = window.setInterval(tick, 1000);
     poll();
