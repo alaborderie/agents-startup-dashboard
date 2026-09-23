@@ -72,12 +72,31 @@ The rules that make this work:
 The server is a projection, not a system of record. If Postgres is lost, the next
 tick fully restores it.
 
+### The live feed
+
+The same push-only rule governs the "running now" panel. While a tick runs,
+`bin/live-daemon.sh` posts the currently running agents every few seconds to
+`POST /ingest/live`, and the page polls the public `GET /live.json` (every 3 s,
+`no-store`) to animate them. `bin/live-snapshot.py` redacts anything resembling a
+credential from each log tail before it leaves the laptop; the service renders
+what it is given and never reads the laptop's disk.
+
+Unlike snapshot ingest, the live feed is a **replace-the-whole-set** write: every
+push deletes the current `live_runs` and inserts exactly what it carries. A push
+with no runs therefore clears the panel. `live_state` records one row with the
+laptop's `generated_at`, cycle and tick flag; the service adds `age_seconds` on
+read so the page can grey out a feed whose laptop has gone away. Absence is
+never treated as history here — there is nothing worth retaining about a run that
+is no longer running.
+
 ## Stack
 
 - Go 1.27, stdlib `net/http` (`http.ServeMux` method+path patterns). No router.
-- `html/template` + `embed.FS`. The content-hashed stylesheet is embedded in the
-  binary and the dashboard uses one card layout at every width. **Zero JS, no
-  build step, no bundler.**
+- `html/template` + `embed.FS`. The content-hashed stylesheet and a single
+  vanilla script are embedded in the binary and the dashboard uses one card
+  layout at every width. **No build step, no bundler, no framework** — the live
+  panel is progressive enhancement over server-rendered HTML and degrades to the
+  static page without JS.
 - Postgres via `jackc/pgx/v5`, pool max 4.
 - **Schema migrations are embedded in the binary and run in-process at startup**,
   idempotently. They are deliberately *not* a Postgres `initdb` ConfigMap: that
@@ -93,7 +112,9 @@ tick fully restores it.
 | `GET /` | public | The dashboard page. `Cache-Control: public, max-age=60`, `X-Robots-Tag: noindex`. |
 | `GET /healthz` | public | Liveness/readiness probe. |
 | `GET /robots.txt` | public | Disallow all. Public URL and indexed-by-Google are separable choices. |
-| `POST /ingest` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | The only write path in the system. |
+| `GET /live.json` | public | Running agents and redacted log tails. `Cache-Control: no-store`, `X-Robots-Tag: noindex`. |
+| `POST /ingest` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | Venture snapshot write path. |
+| `POST /ingest/live` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | Live running-set write path. Replace-whole-set semantics. |
 
 ### Ingest request
 
@@ -130,6 +151,39 @@ tick fully restores it.
 { "status": "applied", "applied": 12, "skipped_stale": 0, "warnings": [] }
 ```
 
+### Live ingest request
+
+`POST /ingest/live` takes the same bearer token. Its `runs` array replaces the
+entire running set: an empty array clears it.
+
+```json
+{
+  "generated_at": "2026-09-24T12:00:00+00:00",
+  "cycle": 151,
+  "tick_running": true,
+  "runs": [
+    {
+      "run_id": "example-venture|2026-09-24T12:00:00+00:00|developer",
+      "slug": "example-venture",
+      "role": "developer",
+      "leg": "primary",
+      "engine": "opencode",
+      "model": "openai/gpt-6-sol",
+      "status": "running",
+      "started_at": "2026-09-24T12:00:00+00:00",
+      "log_bytes": 56688,
+      "log_tail": "already redacted on the laptop; <= 64 KB"
+    }
+  ]
+}
+```
+
+Response: `{ "status": "ok", "runs": 1, "warnings": [] }`. Envelope limits: 1 MB
+body, at most 64 runs, `generated_at` required and no more than an hour ahead. A
+run missing `run_id`, `slug` or `role` is skipped with a warning rather than
+rejecting the push. `GET /live.json` returns the stored set plus a server-computed
+`age_seconds` so the page can dim a feed that stopped arriving.
+
 ## Configuration
 
 All configuration is environment variables. **No secret value belongs in this
@@ -138,7 +192,7 @@ repo, in any manifest, or in any commit.**
 | Variable | Required | Notes |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string. From a Kubernetes Secret in production. |
-| `DASHBOARD_INGEST_TOKEN` | yes | Shared bearer token for `POST /ingest`. Compared in constant time. From a Kubernetes Secret in production. |
+| `DASHBOARD_INGEST_TOKEN` | yes | Shared bearer token for `POST /ingest` and `POST /ingest/live`. Compared in constant time. From a Kubernetes Secret in production. |
 | `PORT` | no | Defaults to `8080`. |
 | `PUBLIC_URL` | no | Canonical public URL, used for links in the page. |
 
@@ -162,7 +216,16 @@ curl -sS -X POST http://localhost:8080/ingest \
   -H 'Content-Type: application/json' \
   --data-binary @testdata/snapshot.json | jq
 
-# 4. Look at it
+# 4. Push a live running set (clears the panel again with "runs": [])
+curl -sS -X POST http://localhost:8080/ingest/live \
+  -H "Authorization: Bearer $DASHBOARD_INGEST_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"generated_at":"2026-09-24T12:00:00Z","cycle":151,"tick_running":true,
+           "runs":[{"run_id":"demo|2026-09-24T12:00:00Z|developer","slug":"demo",
+           "role":"developer","engine":"opencode","model":"openai/gpt-6-sol",
+           "status":"running","started_at":"2026-09-24T12:00:00Z","log_tail":"building…"}]}' | jq
+
+# 5. Look at it
 open http://localhost:8080
 ```
 
@@ -189,7 +252,7 @@ export DASHBOARD_INGEST_TOKEN='local-dev-token-not-a-real-secret'
 ```
 cmd/dashboard/      main: config, pool, routes, graceful shutdown
 internal/store/     pgx access, embedded migrations, snapshot transaction
-internal/web/       html/template handlers and the embedded template + CSS
+internal/web/       html/template handlers and the embedded template + CSS + JS
 testdata/           sample snapshots used by tests and by curl
 Dockerfile          multi-stage; static binary on a minimal base
 .github/workflows/  build and push ghcr.io/alaborderie/agents-startup-dashboard

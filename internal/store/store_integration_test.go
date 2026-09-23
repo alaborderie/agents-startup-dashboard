@@ -163,6 +163,13 @@ func TestSchemaHasExactlyTheDesignedColumns(t *testing.T) {
 			"unattributed_total", "unattributed_fresh", "cost_usd",
 			"cost_measured_runs", "seconds", "snapshot_generated_at",
 		},
+		"live_state": {
+			"id", "generated_at", "cycle", "tick_running", "received_at",
+		},
+		"live_runs": {
+			"run_id", "slug", "role", "leg", "engine", "model", "status",
+			"started_at", "log_bytes", "log_tail", "received_at",
+		},
 	}
 	for table, want := range expected {
 		rows, err := testPool.Query(context.Background(), `
@@ -588,9 +595,79 @@ func TestStaleTokenBlockIsSkippedButIdentityMismatchOnlyWarns(t *testing.T) {
 	}
 }
 
+func TestApplyLiveMirrorsRunningSet(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	ctx := context.Background()
+
+	empty, err := s.Live(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Runs) != 0 || empty.TickRunning || empty.GeneratedAt != nil {
+		t.Fatalf("unexpected initial live state: %#v", empty)
+	}
+
+	gen := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	started := gen.Add(-90 * time.Second)
+	if err := s.ApplyLive(ctx, LivePayload{
+		GeneratedAt: &gen, Cycle: 151, TickRunning: true,
+		Runs: []LiveRun{
+			{RunID: "a", Slug: "alpha", Role: "developer", Status: "running", StartedAt: &started, LogBytes: 10, LogTail: "alpha log"},
+			{RunID: "b", Slug: "beta", Role: "reviewer", Status: "running"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := s.Live(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 2 || !state.TickRunning || state.Cycle != 151 {
+		t.Fatalf("live state = %#v", state)
+	}
+	if state.GeneratedAt == nil || !state.GeneratedAt.Equal(gen) {
+		t.Fatalf("generated_at = %v, want %v", state.GeneratedAt, gen)
+	}
+	if state.AgeSeconds < 0 {
+		t.Fatalf("age_seconds = %d", state.AgeSeconds)
+	}
+	if state.Runs[0].RunID != "a" || state.Runs[0].LogTail != "alpha log" {
+		t.Fatalf("first run = %#v", state.Runs[0])
+	}
+
+	// A second push replaces the whole set, not merge it.
+	if err := s.ApplyLive(ctx, LivePayload{
+		GeneratedAt: &gen, Cycle: 152,
+		Runs: []LiveRun{{RunID: "b", Slug: "beta", Role: "reviewer", Status: "running"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.Live(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].RunID != "b" || state.Cycle != 152 || state.TickRunning {
+		t.Fatalf("live state after replace = %#v", state)
+	}
+
+	// An empty push means nothing is running.
+	if err := s.ApplyLive(ctx, LivePayload{GeneratedAt: &gen, Cycle: 152}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.Live(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 0 {
+		t.Fatalf("live runs after empty push = %#v", state.Runs)
+	}
+}
+
 func resetDatabase(t *testing.T) {
 	t.Helper()
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE ventures, ingest_snapshots, venture_tokens, role_tokens, company_tokens RESTART IDENTITY"); err != nil {
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE ventures, ingest_snapshots, venture_tokens, role_tokens, company_tokens, live_runs, live_state RESTART IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := testPool.Exec(context.Background(), "DELETE FROM schema_migrations WHERE name LIKE 'proof/%'"); err != nil {

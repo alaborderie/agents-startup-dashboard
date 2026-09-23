@@ -14,10 +14,12 @@ import (
 )
 
 type stubStore struct {
-	ventures []store.DashboardVenture
-	spend    store.DashboardSpend
-	lastSync *time.Time
-	result   store.ApplyResult
+	ventures    []store.DashboardVenture
+	spend       store.DashboardSpend
+	lastSync    *time.Time
+	result      store.ApplyResult
+	live        store.LiveState
+	appliedLive store.LivePayload
 }
 
 func (s *stubStore) ApplySnapshot(_ context.Context, _ store.Snapshot, _ []store.Venture, _ []string, _ []string) (store.ApplyResult, error) {
@@ -34,6 +36,15 @@ func (s *stubStore) DashboardSpend(context.Context) (store.DashboardSpend, error
 
 func (s *stubStore) LastSync(context.Context) (*time.Time, error) {
 	return s.lastSync, nil
+}
+
+func (s *stubStore) ApplyLive(_ context.Context, payload store.LivePayload) error {
+	s.appliedLive = payload
+	return nil
+}
+
+func (s *stubStore) Live(context.Context) (store.LiveState, error) {
+	return s.live, nil
 }
 
 func TestDashboardShowsDesignReviewInsteadOfRawStatus(t *testing.T) {
@@ -266,7 +277,7 @@ func TestDashboardUsesOneCardLayoutAtEveryWidth(t *testing.T) {
 		{Title: "Second venture", Field: "other", Status: "deployed"},
 	}}).Body.String()
 
-	if got := strings.Count(body, `<article class="venture">`); got != 2 {
+	if got := strings.Count(body, `<article class="venture"`); got != 2 {
 		t.Fatalf("venture card count = %d body = %s", got, body)
 	}
 	for _, obsolete := range []string{"<table", "<thead", "<tbody", "<tr", "<th", "<td", "data-label="} {
@@ -467,6 +478,151 @@ func TestDesignReviewValidationKeepsRowAndReportsBadOrMissingURL(t *testing.T) {
 	}
 	if len(warnings) != 3 {
 		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
+func TestDashboardRendersAgentFlowForActiveVentures(t *testing.T) {
+	stage := "BUILD"
+	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
+		{Slug: "alpha", Title: "Alpha", Field: "development", Status: "in_progress", Stage: stage},
+	}}).Body.String()
+
+	for _, want := range []string{
+		`class="flow" data-slug="alpha"`,
+		`class="step step-done has-role" data-stage="IDEATION" data-role="inventor"`,
+		`class="step step-now has-role" data-stage="BUILD" data-role="developer"`,
+		`class="step step-next has-role" data-stage="GTM" data-role="documentation"`,
+		`class="running-now"`,
+		`id="log-drawer"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestDashboardOmitsAgentFlowForAbandonedVentures(t *testing.T) {
+	reason := "no demand"
+	body := renderDashboard(t, &stubStore{ventures: []store.DashboardVenture{
+		{Slug: "beta", Title: "Beta", Field: "other", Status: "abandoned", Stage: "BUILD", AbandonedReason: reason},
+	}}).Body.String()
+
+	if strings.Contains(body, `class="flow"`) {
+		t.Fatalf("abandoned venture rendered an agent flow: %s", body)
+	}
+}
+
+func TestDashboardServesContentHashedScript(t *testing.T) {
+	app := newTestApp(t, &stubStore{})
+	handler := app.Handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	body := response.Body.String()
+	if got := strings.Count(body, `<script defer src="`); got != 1 {
+		t.Fatalf("script tag count = %d body = %s", got, body)
+	}
+	match := regexp.MustCompile(`<script defer src="(/static/app\.[0-9a-f]{8,}\.js)">`).FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("page missing content-hashed script path: %s", body)
+	}
+
+	script := httptest.NewRecorder()
+	handler.ServeHTTP(script, httptest.NewRequest(http.MethodGet, match[1], nil))
+	if script.Code != http.StatusOK {
+		t.Fatalf("script status = %d", script.Code)
+	}
+	if got := script.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
+		t.Fatalf("script Content-Type = %q", got)
+	}
+	if got := script.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("script Cache-Control = %q", got)
+	}
+	if !strings.Contains(script.Body.String(), "/live.json") {
+		t.Fatalf("script does not poll the live feed: %s", script.Body.String())
+	}
+}
+
+func TestLiveJSONServesRunningSetWithServerAge(t *testing.T) {
+	started := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	app := newTestApp(t, &stubStore{live: store.LiveState{
+		Cycle:       151,
+		TickRunning: true,
+		AgeSeconds:  3,
+		Runs: []store.LiveRun{{
+			RunID: "alpha|2026-09-24T12:00:00Z|developer", Slug: "alpha", Role: "developer",
+			Leg: "primary", Engine: "opencode", Model: "gpt-6-sol", Status: "running",
+			StartedAt: &started, LogBytes: 2048, LogTail: "hello\n",
+		}},
+	}})
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/live.json", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if got := response.Header().Get("X-Robots-Tag"); got != "noindex" {
+		t.Fatalf("X-Robots-Tag = %q", got)
+	}
+	for _, want := range []string{`"run_id":"alpha|2026-09-24T12:00:00Z|developer"`, `"age_seconds":3`, `"tick_running":true`, `"log_tail":"hello\n"`} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("live feed missing %q: %s", want, response.Body.String())
+		}
+	}
+}
+
+func TestIngestLiveRejectsBadAuthWithEmptyBody(t *testing.T) {
+	app := newTestApp(t, &stubStore{})
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ingest/live", strings.NewReader("{}")))
+	if response.Code != http.StatusUnauthorized || response.Body.Len() != 0 {
+		t.Fatalf("status = %d body = %q", response.Code, response.Body.String())
+	}
+}
+
+func TestIngestLiveValidatesTruncatesAndMirrorsSet(t *testing.T) {
+	dataStore := &stubStore{}
+	app := newTestApp(t, dataStore)
+	app.now = func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) }
+	longTail := strings.Repeat("a", maxLogTail+500)
+	payload := `{"generated_at":"2026-09-24T12:00:00Z","cycle":151,"tick_running":true,"runs":[` +
+		`{"run_id":"alpha|t1|developer","slug":"alpha","role":"developer","log_tail":"` + longTail + `"},` +
+		`{"slug":"alpha","role":"developer"}` +
+		`]}`
+	request := httptest.NewRequest(http.MethodPost, "/ingest/live", strings.NewReader(payload))
+	request.Header.Set("Authorization", "Bearer fake-test-token")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %q", response.Code, response.Body.String())
+	}
+	if len(dataStore.appliedLive.Runs) != 1 {
+		t.Fatalf("applied runs = %#v", dataStore.appliedLive.Runs)
+	}
+	got := dataStore.appliedLive.Runs[0]
+	if len(got.LogTail) > maxLogTail+len("[…]\n") {
+		t.Fatalf("log tail not truncated: %d bytes", len(got.LogTail))
+	}
+	if !strings.HasPrefix(got.LogTail, "[…]") {
+		t.Fatalf("truncated log tail lost its elision marker: %q", got.LogTail[:16])
+	}
+	if !strings.Contains(response.Body.String(), `"warnings"`) {
+		t.Fatalf("response lost warnings: %s", response.Body.String())
+	}
+}
+
+func TestIngestLiveRequiresGeneratedAt(t *testing.T) {
+	app := newTestApp(t, &stubStore{})
+	request := httptest.NewRequest(http.MethodPost, "/ingest/live", strings.NewReader(`{"runs":[]}`))
+	request.Header.Set("Authorization", "Bearer fake-test-token")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %q", response.Code, response.Body.String())
 	}
 }
 

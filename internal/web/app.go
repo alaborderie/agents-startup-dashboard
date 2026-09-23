@@ -22,7 +22,7 @@ import (
 
 const maxRequestBody = 1 << 20
 
-//go:embed templates/*.html static/app.css
+//go:embed templates/*.html static/app.css static/app.js
 var webFiles embed.FS
 
 type DataStore interface {
@@ -30,6 +30,8 @@ type DataStore interface {
 	ListVentures(context.Context) ([]store.DashboardVenture, error)
 	DashboardSpend(context.Context) (store.DashboardSpend, error)
 	LastSync(context.Context) (*time.Time, error)
+	ApplyLive(context.Context, store.LivePayload) error
+	Live(context.Context) (store.LiveState, error)
 }
 
 type App struct {
@@ -38,7 +40,14 @@ type App struct {
 	template       *template.Template
 	stylesheet     []byte
 	stylesheetPath string
+	script         []byte
+	scriptPath     string
 	now            func() time.Time
+}
+
+func contentHashPath(name, extension string, body []byte) string {
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("/static/%s.%x.%s", name, sum[:6], extension)
 }
 
 func New(dataStore DataStore, ingestToken string) (*App, error) {
@@ -46,8 +55,10 @@ func New(dataStore DataStore, ingestToken string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	stylesheetHash := sha256.Sum256(stylesheet)
-	stylesheetPath := fmt.Sprintf("/static/app.%x.css", stylesheetHash[:6])
+	script, err := webFiles.ReadFile("static/app.js")
+	if err != nil {
+		return nil, err
+	}
 
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
 		"paragraphs":  paragraphs,
@@ -61,7 +72,9 @@ func New(dataStore DataStore, ingestToken string) (*App, error) {
 		ingestToken:    ingestToken,
 		template:       tmpl,
 		stylesheet:     stylesheet,
-		stylesheetPath: stylesheetPath,
+		stylesheetPath: contentHashPath("app", "css", stylesheet),
+		script:         script,
+		scriptPath:     contentHashPath("app", "js", script),
 		now:            time.Now,
 	}, nil
 }
@@ -71,25 +84,38 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", a.dashboard)
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /robots.txt", robots)
+	mux.HandleFunc("GET /live.json", a.liveJSON)
 	mux.Handle("POST /ingest", http.TimeoutHandler(http.HandlerFunc(a.ingest), 20*time.Second, ""))
+	mux.Handle("POST /ingest/live", http.TimeoutHandler(http.HandlerFunc(a.ingestLive), 20*time.Second, ""))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/static/") {
-			a.serveStylesheet(w, r)
+			a.serveStatic(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
 }
 
-func (a *App) serveStylesheet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet || r.URL.Path != a.stylesheetPath {
+func (a *App) serveStatic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	switch r.URL.Path {
+	case a.stylesheetPath:
+		a.writeAsset(w, "text/css; charset=utf-8", a.stylesheet)
+	case a.scriptPath:
+		a.writeAsset(w, "text/javascript; charset=utf-8", a.script)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (a *App) writeAsset(w http.ResponseWriter, contentType string, body []byte) {
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(a.stylesheet)
+	_, _ = w.Write(body)
 }
 
 func healthz(w http.ResponseWriter, _ *http.Request) {
@@ -110,6 +136,7 @@ type pageData struct {
 	Agents         []agentSpendView
 	LastSync       string
 	StylesheetPath string
+	ScriptPath     string
 }
 
 type tokenFigureView struct {
@@ -119,6 +146,7 @@ type tokenFigureView struct {
 }
 
 type ventureView struct {
+	Slug             string
 	Title            string
 	Field            string
 	Status           string
@@ -132,6 +160,78 @@ type ventureView struct {
 	RepoURL          string
 	DesignURL        string
 	Spend            *ventureSpendView
+	Flow             []flowStepView
+}
+
+// flowStepView is one node in the deterministic agent pipeline. State is one
+// of "done", "now" or "next" relative to the venture's current stage.
+type flowStepView struct {
+	Stage string
+	Role  string
+	Label string
+	State string
+}
+
+type pipelineStep struct {
+	stage string
+	role  string
+	label string
+}
+
+// pipeline is the canonical ordered path a venture walks. Gates and wait
+// states are first-class nodes so the picture stays honest about what is
+// actually happening, including human approvals.
+var pipeline = []pipelineStep{
+	{"IDEATION", "inventor", "Ideation"},
+	{"SCREENED", "screener", "Screening"},
+	{"BUSINESS_CASE", "analyst", "Business case"},
+	{"GATE_BUILD", "", "Build gate"},
+	{"ARCHITECTURE", "architect", "Architecture"},
+	{"BACKLOG", "pm", "Backlog"},
+	{"DESIGN", "designer", "Design"},
+	{"DESIGN_REVIEW", "", "Design review"},
+	{"BUILD", "developer", "Build"},
+	{"REVIEW", "reviewer", "Review"},
+	{"WAIT_MERGE", "", "Merge"},
+	{"INFRA", "devops", "Infra"},
+	{"GATE_DEPLOY", "", "Deploy gate"},
+	{"WAIT_DEPLOY", "", "Deploy"},
+	{"DEPLOYED", "sales", "GTM"},
+	{"GTM", "documentation", "Docs"},
+}
+
+// pipelineIndex maps a stage to its position in pipeline.
+var pipelineIndex = func() map[string]int {
+	index := make(map[string]int, len(pipeline))
+	for i, step := range pipeline {
+		index[step.stage] = i
+	}
+	return index
+}()
+
+func ventureFlow(status, stage string) []flowStepView {
+	if status == "abandoned" {
+		return nil
+	}
+	current, known := pipelineIndex[stage]
+	flow := make([]flowStepView, 0, len(pipeline))
+	for i, step := range pipeline {
+		state := "next"
+		switch {
+		case !known:
+			state = "next"
+		case i < current:
+			state = "done"
+		case i == current:
+			state = "now"
+		default:
+			state = "next"
+		}
+		flow = append(flow, flowStepView{
+			Stage: step.stage, Role: step.role, Label: step.label, State: state,
+		})
+	}
+	return flow
 }
 
 type ventureSpendView struct {
@@ -189,6 +289,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	view := buildPageData(ventures, spend)
 	view.LastSync = syncLabel(a.now(), lastSync)
 	view.StylesheetPath = a.stylesheetPath
+	view.ScriptPath = a.scriptPath
 	if err := a.template.ExecuteTemplate(w, "index.html", view); err != nil {
 		return
 	}
@@ -204,11 +305,13 @@ func buildPageData(ventures []store.DashboardVenture, spend store.DashboardSpend
 	}
 	for _, venture := range ventures {
 		item := ventureView{
+			Slug:  venture.Slug,
 			Title: venture.Title, Field: venture.Field, Status: venture.Status,
 			Stage: venture.Stage, Kind: venture.Kind, Description: venture.Description,
 			Monetization: venture.Monetization, AbandonedReason: venture.AbandonedReason,
 			AbandonedAtStage: venture.AbandonedAtStage, URL: venture.URL,
 			RepoURL: venture.RepoURL, DesignURL: venture.DesignURL,
+			Flow: ventureFlow(venture.Status, venture.Stage),
 		}
 		if venture.Tokens != nil {
 			item.Spend = &ventureSpendView{
@@ -512,4 +615,106 @@ func truncate(value *string, limit int) *string {
 	runes := []rune(*value)
 	truncated := string(runes[:limit])
 	return &truncated
+}
+
+const (
+	maxLiveRuns = 64
+	maxLogTail  = 64 << 10
+)
+
+// ingestLive mirrors the running-agent set. Unlike the venture snapshot this
+// is deliberately not idempotent: every push is the complete truth, and an
+// empty push means nothing is running.
+func (a *App) ingestLive(w http.ResponseWriter, r *http.Request) {
+	if !validBearer(r.Header.Get("Authorization"), a.ingestToken) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	decoder := json.NewDecoder(r.Body)
+	var payload store.LivePayload
+	if err := decoder.Decode(&payload); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			http.Error(w, "request must contain one JSON object", http.StatusBadRequest)
+		} else {
+			writeDecodeError(w, err)
+		}
+		return
+	}
+
+	if payload.GeneratedAt == nil || payload.GeneratedAt.IsZero() {
+		http.Error(w, "generated_at is required", http.StatusBadRequest)
+		return
+	}
+	if payload.GeneratedAt.After(a.now().Add(time.Hour)) {
+		http.Error(w, "generated_at is too far in the future", http.StatusBadRequest)
+		return
+	}
+	if len(payload.Runs) > maxLiveRuns {
+		http.Error(w, "too many live runs", http.StatusBadRequest)
+		return
+	}
+
+	runs, warnings := validateLiveRuns(payload.Runs)
+	payload.Runs = runs
+	if err := a.store.ApplyLive(r.Context(), payload); err != nil {
+		http.Error(w, "live ingest failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Status   string   `json:"status"`
+		Runs     int      `json:"runs"`
+		Warnings []string `json:"warnings"`
+	}{Status: "ok", Runs: len(runs), Warnings: warnings})
+}
+
+func validateLiveRuns(runs []store.LiveRun) ([]store.LiveRun, []string) {
+	valid := make([]store.LiveRun, 0, len(runs))
+	warnings := make([]string, 0)
+	seen := make(map[string]int, len(runs))
+	for _, run := range runs {
+		if run.RunID == "" || run.Slug == "" || run.Role == "" {
+			warnings = append(warnings, "live run skipped: run_id, slug and role are required")
+			continue
+		}
+		if run.Status == "" {
+			run.Status = "running"
+		}
+		if len(run.LogTail) > maxLogTail {
+			cut := run.LogTail[len(run.LogTail)-maxLogTail:]
+			run.LogTail = "[…]\n" + cut
+		}
+		if at, exists := seen[run.RunID]; exists {
+			valid[at] = run
+			continue
+		}
+		seen[run.RunID] = len(valid)
+		valid = append(valid, run)
+	}
+	return valid, warnings
+}
+
+// liveJSON is what the page polls. It is public but never cached, and carries
+// a server-computed age so a stalled laptop feed visibly decays.
+func (a *App) liveJSON(w http.ResponseWriter, r *http.Request) {
+	state, err := a.store.Live(r.Context())
+	if err != nil {
+		http.Error(w, "live feed unavailable", http.StatusInternalServerError)
+		return
+	}
+	if state.Runs == nil {
+		state.Runs = []store.LiveRun{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex")
+	_ = json.NewEncoder(w).Encode(state)
 }

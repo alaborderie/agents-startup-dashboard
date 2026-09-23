@@ -6,6 +6,7 @@
   <meta name="robots" content="noindex,nofollow">
   <title>Agent startup dashboard</title>
   <link rel="stylesheet" href="{{.StylesheetPath}}">
+  <script defer src="{{.ScriptPath}}"></script>
 </head>
 <body>
   <main>
@@ -13,6 +14,14 @@
       <h1>Ventures</h1>
       <p class="sync">{{.LastSync}}</p>
     </header>
+    <section class="running-now" id="running-now" aria-labelledby="running-now-heading" hidden>
+      <div class="section-heading">
+        <h2 id="running-now-heading"><span class="live-dot" aria-hidden="true"></span>Running now</h2>
+        <p class="live-meta" id="live-meta"></p>
+      </div>
+      <ul class="run-list" id="run-list"></ul>
+      <p class="live-idle" id="live-idle" hidden>No agents are running right now.</p>
+    </section>
     <section class="company-spend" aria-labelledby="company-spend-heading">
       <div class="section-heading">
         <h2 id="company-spend-heading">Company spend</h2>
@@ -49,7 +58,7 @@
     <ul class="ventures">
       {{range .Ventures}}
         <li>
-          <article class="venture">
+          <article class="venture" data-slug="{{.Slug}}">
             <div class="rail">
               <h2 class="title">{{.Title}}</h2>
               {{if .Stage}}<span class="stage">{{.Stage}}</span>{{end}}
@@ -81,6 +90,28 @@
                 {{if and .RepoURL (ne .Status "abandoned")}}<a href="{{.RepoURL}}">{{.RepoURL}}</a>{{end}}
               </div>
             </div>
+            {{if .Flow}}
+              <details class="flow" data-slug="{{.Slug}}">
+                <summary class="flow-toggle">
+                  <span class="flow-label">Agent flow</span>
+                  <span class="flow-hint">16 stages · IDEATION → GTM</span>
+                  <span class="flow-live">live</span>
+                </summary>
+                <div class="flow-body">
+                  <ol class="pipeline">
+                    {{range .Flow}}
+                      <li class="step step-{{.State}}{{if .Role}} has-role{{end}}" data-stage="{{.Stage}}"{{if .Role}} data-role="{{.Role}}"{{end}}>
+                        <span class="step-node" aria-hidden="true"></span>
+                        <span class="step-text">
+                          <span class="step-label">{{.Label}}</span>
+                          {{if .Role}}<span class="step-role">{{.Role}}</span>{{end}}
+                        </span>
+                      </li>
+                    {{end}}
+                  </ol>
+                </div>
+              </details>
+            {{end}}
           </article>
         </li>
       {{end}}
@@ -110,5 +141,15 @@
       </footer>
     {{end}}
   </main>
+  <aside class="log-drawer" id="log-drawer" aria-hidden="true" aria-labelledby="log-title">
+    <header class="log-head">
+      <div class="log-heading">
+        <h3 id="log-title">Agent output</h3>
+        <p class="log-sub" id="log-sub"></p>
+      </div>
+      <button type="button" class="log-close" id="log-close" aria-label="Close agent output">×</button>
+    </header>
+    <pre class="log-body" id="log-body" tabindex="0">Waiting for output…</pre>
+  </aside>
 </body>
 </html>

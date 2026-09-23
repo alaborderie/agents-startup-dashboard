@@ -505,3 +505,127 @@ func (s *Store) LastSync(ctx context.Context) (*time.Time, error) {
 	}
 	return &received.Time, nil
 }
+
+// LiveRun is one agent invocation currently in flight on the laptop. The
+// laptop owns the interpretation; the server only mirrors and serves it.
+type LiveRun struct {
+	RunID     string     `json:"run_id"`
+	Slug      string     `json:"slug"`
+	Role      string     `json:"role"`
+	Leg       string     `json:"leg,omitempty"`
+	Engine    string     `json:"engine,omitempty"`
+	Model     string     `json:"model,omitempty"`
+	Status    string     `json:"status"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	LogBytes  int64      `json:"log_bytes"`
+	LogTail   string     `json:"log_tail,omitempty"`
+}
+
+// LivePayload is the full running-set snapshot pushed by the laptop.
+type LivePayload struct {
+	GeneratedAt *time.Time `json:"generated_at"`
+	Cycle       int        `json:"cycle"`
+	TickRunning bool       `json:"tick_running"`
+	Runs        []LiveRun  `json:"runs"`
+}
+
+// LiveState is what the public page reads back. AgeSeconds is computed
+// server-side from receive time so the client can dim a stale feed.
+type LiveState struct {
+	GeneratedAt *time.Time `json:"generated_at"`
+	Cycle       int        `json:"cycle"`
+	TickRunning bool       `json:"tick_running"`
+	AgeSeconds  int        `json:"age_seconds"`
+	Runs        []LiveRun  `json:"runs"`
+}
+
+// ApplyLive replaces the live run set with the payload. Exact mirror: the
+// caller sends the complete set of currently running agents every time.
+func (s *Store) ApplyLive(ctx context.Context, payload LivePayload) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin live tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "DELETE FROM live_runs"); err != nil {
+		return fmt.Errorf("clear live runs: %w", err)
+	}
+	for _, run := range payload.Runs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO live_runs
+				(run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail, received_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+			run.RunID, run.Slug, run.Role, run.Leg, run.Engine, run.Model,
+			run.Status, run.StartedAt, run.LogBytes, run.LogTail,
+		); err != nil {
+			return fmt.Errorf("insert live run %q: %w", run.RunID, err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO live_state (id, generated_at, cycle, tick_running, received_at)
+		VALUES (true, $1, $2, $3, now())
+		ON CONFLICT (id) DO UPDATE SET
+			generated_at = EXCLUDED.generated_at,
+			cycle = EXCLUDED.cycle,
+			tick_running = EXCLUDED.tick_running,
+			received_at = now()`,
+		payload.GeneratedAt, payload.Cycle, payload.TickRunning,
+	); err != nil {
+		return fmt.Errorf("upsert live state: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit live tx: %w", err)
+	}
+	return nil
+}
+
+// Live reads back the current live state. A zero LiveState (empty runs) is
+// returned when the laptop has never pushed anything yet.
+func (s *Store) Live(ctx context.Context) (LiveState, error) {
+	var state LiveState
+	state.Runs = []LiveRun{}
+
+	var received sql.NullTime
+	err := s.pool.QueryRow(ctx,
+		"SELECT generated_at, cycle, tick_running, received_at FROM live_state WHERE id = true",
+	).Scan(&state.GeneratedAt, &state.Cycle, &state.TickRunning, &received)
+	if err == pgx.ErrNoRows {
+		return state, nil
+	}
+	if err != nil {
+		return LiveState{}, fmt.Errorf("query live state: %w", err)
+	}
+	if received.Valid {
+		age := int(time.Since(received.Time).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		state.AgeSeconds = age
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail
+		FROM live_runs
+		ORDER BY started_at ASC NULLS LAST, slug, role`)
+	if err != nil {
+		return LiveState{}, fmt.Errorf("query live runs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var run LiveRun
+		if err := rows.Scan(
+			&run.RunID, &run.Slug, &run.Role, &run.Leg, &run.Engine, &run.Model,
+			&run.Status, &run.StartedAt, &run.LogBytes, &run.LogTail,
+		); err != nil {
+			return LiveState{}, fmt.Errorf("scan live run: %w", err)
+		}
+		state.Runs = append(state.Runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return LiveState{}, fmt.Errorf("iterate live runs: %w", err)
+	}
+	return state, nil
+}
