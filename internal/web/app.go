@@ -32,6 +32,7 @@ type DataStore interface {
 	LastSync(context.Context) (*time.Time, error)
 	ApplyLive(context.Context, store.LivePayload) error
 	Live(context.Context) (store.LiveState, error)
+	SnapshotStatus(context.Context) (store.SnapshotStatus, error)
 }
 
 type App struct {
@@ -85,6 +86,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /robots.txt", robots)
 	mux.HandleFunc("GET /live.json", a.liveJSON)
+	mux.HandleFunc("GET /snapshot-status.json", a.snapshotStatusJSON)
 	mux.Handle("POST /ingest", http.TimeoutHandler(http.HandlerFunc(a.ingest), 20*time.Second, ""))
 	mux.Handle("POST /ingest/live", http.TimeoutHandler(http.HandlerFunc(a.ingestLive), 20*time.Second, ""))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +96,18 @@ func (a *App) Handler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func (a *App) snapshotStatusJSON(w http.ResponseWriter, r *http.Request) {
+	status, err := a.store.SnapshotStatus(r.Context())
+	if err != nil {
+		http.Error(w, "snapshot status unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex")
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 func (a *App) serveStatic(w http.ResponseWriter, r *http.Request) {
