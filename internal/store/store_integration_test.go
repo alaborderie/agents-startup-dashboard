@@ -263,12 +263,19 @@ func TestSnapshotStatusUpdatesNotesAndIgnoresOutOfOrderSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := s.SnapshotStatus(ctx)
-	if err != nil || !state.NextTick.Equal(now) || len(state.QueuedNotes["queued"]) != 1 || state.QueuedNotes["queued"][0] != "Review <this>" {
+	if err != nil || state.NextTick == nil || !state.NextTick.Equal(now) || len(state.QueuedNotes["queued"]) != 1 || state.QueuedNotes["queued"][0] != "Review <this>" {
 		t.Fatalf("first state = %#v, %v", state, err)
 	}
 	second := Snapshot{SnapshotID: "notes-cleared", GeneratedAt: now.Add(time.Second), Ventures: []Venture{venture}}
 	if _, err := s.ApplySnapshot(ctx, second, second.Ventures, []string{"queued"}, nil); err != nil {
 		t.Fatal(err)
+	}
+	var notesJSON string
+	if err := testPool.QueryRow(ctx, "SELECT queued_notes::text FROM ventures WHERE slug = 'queued'").Scan(&notesJSON); err != nil {
+		t.Fatal(err)
+	}
+	if notesJSON != "[]" {
+		t.Fatalf("cleared notes = %s, want []", notesJSON)
 	}
 	if _, err := s.ApplySnapshot(ctx, first, first.Ventures, []string{"queued"}, nil); err != nil {
 		t.Fatal(err)

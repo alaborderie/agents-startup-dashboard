@@ -162,7 +162,11 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 		result.TokenRecords = snapshot.Tokens.Records
 	}
 	for _, venture := range valid {
-		notes, err := json.Marshal(snapshot.QueuedNotes[venture.Slug])
+		pending := snapshot.QueuedNotes[venture.Slug]
+		if pending == nil {
+			pending = []string{}
+		}
+		notes, err := json.Marshal(pending)
 		if err != nil {
 			return ApplyResult{}, fmt.Errorf("encode queued notes: %w", err)
 		}
@@ -288,11 +292,11 @@ func (s *Store) SnapshotStatus(ctx context.Context) (SnapshotStatus, error) {
 		var slug string
 		var notes []byte
 		if err := rows.Scan(&slug, &notes); err != nil {
-			return SnapshotStatus{}, err
+			return SnapshotStatus{}, fmt.Errorf("scan queued notes: %w", err)
 		}
 		var values []string
 		if err := json.Unmarshal(notes, &values); err != nil {
-			return SnapshotStatus{}, err
+			return SnapshotStatus{}, fmt.Errorf("decode queued notes for %q: %w", slug, err)
 		}
 		if len(values) > 0 {
 			status.QueuedNotes[slug] = values

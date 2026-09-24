@@ -92,6 +92,7 @@
       .then(function (state) {
         snapshotStatus = state;
         renderStatus();
+        renderQueuedNotes();
       })
       .catch(function () { /* The last snapshot remains visibly aged. */ });
   }
@@ -116,6 +117,9 @@
       next.textContent = "Next tick: " + new Date(nextTime).toLocaleString() +
         " · in " + formatDuration(Math.ceil((nextTime - Date.now()) / 1000));
     }
+  }
+
+  function renderQueuedNotes() {
     var queued = snapshotStatus.queued_notes || {};
     Array.prototype.forEach.call(document.querySelectorAll("[data-notes-for]"), function (node) {
       var notes = queued[node.getAttribute("data-notes-for")];
