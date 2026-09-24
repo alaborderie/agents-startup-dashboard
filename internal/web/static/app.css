@@ -859,6 +859,40 @@ a:focus-visible {
   font-size: var(--t-body-sm);
 }
 
+.tick-schedule {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-5);
+  margin-top: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.queued-notes {
+  margin-bottom: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-left: 2px solid var(--warn);
+  background: var(--warn-weak);
+  color: var(--ink);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.queued-notes strong {
+  display: block;
+  color: var(--warn);
+  font-size: var(--t-meta);
+}
+
+.queued-notes p { margin: var(--s-2) 0 0; }
+
 /* ---- Agent flow ----------------------------------------------------- */
 
 .flow {

@@ -97,6 +97,18 @@ read so the page can grey out a feed whose laptop has gone away. Absence is
 never treated as history here — there is nothing worth retaining about a run that
 is no longer running.
 
+### Tick schedule and queued instructions
+
+Each full snapshot also carries the laptop's actual systemd timer `last` and
+`next` firing times and the latest five `/note` instructions per venture that
+have not yet reached that venture's next worker start. Sending `/note` triggers
+an immediate snapshot push. The public `GET /snapshot-status.json` is polled by
+the page every 15 seconds; its countdown updates locally each second. If the
+timer is inactive, its scheduled time has passed, or the latest snapshot is
+over three hours old, the page labels the schedule unavailable or stale rather
+than predicting a firing time. **Instructions are public text** and rendered as
+plain text, without HTML interpretation.
+
 ## Stack
 
 - Go 1.27, stdlib `net/http` (`http.ServeMux` method+path patterns). No router.
@@ -121,6 +133,7 @@ is no longer running.
 | `GET /healthz` | public | Liveness/readiness probe. |
 | `GET /robots.txt` | public | Disallow all. Public URL and indexed-by-Google are separable choices. |
 | `GET /live.json` | public | Running agents and redacted log tails. `Cache-Control: no-store`, `X-Robots-Tag: noindex`. |
+| `GET /snapshot-status.json` | public | Last/next timer firing and pending venture instructions. `Cache-Control: no-store`, `X-Robots-Tag: noindex`. |
 | `POST /ingest` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | Venture snapshot write path. |
 | `POST /ingest/live` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | Live running-set write path. Replace-whole-set semantics. |
 
@@ -128,10 +141,13 @@ is no longer running.
 
 ```json
 {
-  "snapshot_id": "<sha256 of the canonicalised ventures array>",
+  "snapshot_id": "<sha256 of canonicalised ventures, tokens and status>",
   "generated_at": "2026-08-24T22:31:07+02:00",
   "cycle": 41,
   "source": "laptop",
+  "last_tick": "2026-08-24T21:00:00+02:00",
+  "next_tick": "2026-08-24T22:40:00+02:00",
+  "queued_notes": {"example-venture": ["Focus on the export flow"]},
   "ventures": [
     {
       "slug": "example-venture",

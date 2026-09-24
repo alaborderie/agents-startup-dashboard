@@ -21,6 +21,10 @@
       </div>
       <ul class="run-list" id="run-list"></ul>
       <p class="live-idle" id="live-idle" hidden>No agents are running right now.</p>
+      <div class="tick-schedule" id="tick-schedule" aria-label="Tick schedule">
+        <span id="last-tick">Last tick: awaiting laptop snapshot</span>
+        <span id="next-tick">Next tick: schedule unavailable</span>
+      </div>
     </section>
     <section class="company-spend" aria-labelledby="company-spend-heading">
       <div class="section-heading">
@@ -74,6 +78,7 @@
               {{end}}
             </div>
             <div class="body">
+              <div class="queued-notes" data-notes-for="{{.Slug}}" hidden></div>
               <div class="description">
                 {{range paragraphs .Description}}<p>{{.}}</p>{{end}}
                 {{if and .Monetization (ne .Kind "internal")}}<span class="monetization"><strong>Monetization:</strong> {{.Monetization}}</span>{{end}}

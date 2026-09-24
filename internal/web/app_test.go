@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,34 @@ type stubStore struct {
 	result      store.ApplyResult
 	live        store.LiveState
 	appliedLive store.LivePayload
+	status      store.SnapshotStatus
+}
+
+func (s *stubStore) SnapshotStatus(context.Context) (store.SnapshotStatus, error) {
+	return s.status, nil
+}
+
+func TestSnapshotStatusReturnsScheduleAndQueuedInstructions(t *testing.T) {
+	next := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	stub := &stubStore{status: store.SnapshotStatus{
+		NextTick: &next, QueuedNotes: map[string][]string{"demo": {"<review this>"}},
+	}}
+	app, err := New(stub, "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/snapshot-status.json", nil))
+	var decoded store.SnapshotStatus
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || decoded.NextTick == nil || !decoded.NextTick.Equal(next) || decoded.QueuedNotes["demo"][0] != "<review this>" {
+		t.Fatalf("status response %d: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("schedule response must not be cached")
+	}
 }
 
 func (s *stubStore) ApplySnapshot(_ context.Context, _ store.Snapshot, _ []store.Venture, _ []string, _ []string) (store.ApplyResult, error) {

@@ -143,11 +143,11 @@ func TestSchemaHasExactlyTheDesignedColumns(t *testing.T) {
 			"slug", "title", "field", "status", "stage", "kind", "description",
 			"monetization", "abandoned_reason", "abandoned_at_stage", "url", "repo_url",
 			"created_at", "first_seen_at", "last_seen_at", "missing_since",
-			"snapshot_generated_at", "hidden", "design_url",
+			"snapshot_generated_at", "hidden", "design_url", "queued_notes",
 		},
 		"ingest_snapshots": {
 			"id", "snapshot_id", "generated_at", "received_at", "venture_count",
-			"applied", "skipped_stale", "warnings", "source", "token_records",
+			"applied", "skipped_stale", "warnings", "source", "token_records", "last_tick", "next_tick",
 		},
 		"venture_tokens": {
 			"slug", "runs", "failed_runs", "backfilled_runs", "total", "fresh",
@@ -249,6 +249,34 @@ func TestReplaySameSnapshotIsNoOp(t *testing.T) {
 	}
 	assertCount(t, "ventures", 1)
 	assertCount(t, "ingest_snapshots", 1)
+}
+
+func TestSnapshotStatusUpdatesNotesAndIgnoresOutOfOrderSchedule(t *testing.T) {
+	resetDatabase(t)
+	s := New(testPool)
+	ctx := context.Background()
+	venture := testVenture("queued", "in_progress")
+	now := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	first := Snapshot{SnapshotID: "notes-first", GeneratedAt: now, Ventures: []Venture{venture},
+		NextTick: &now, QueuedNotes: map[string][]string{"queued": {"Review <this>"}}}
+	if _, err := s.ApplySnapshot(ctx, first, first.Ventures, []string{"queued"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.SnapshotStatus(ctx)
+	if err != nil || !state.NextTick.Equal(now) || len(state.QueuedNotes["queued"]) != 1 || state.QueuedNotes["queued"][0] != "Review <this>" {
+		t.Fatalf("first state = %#v, %v", state, err)
+	}
+	second := Snapshot{SnapshotID: "notes-cleared", GeneratedAt: now.Add(time.Second), Ventures: []Venture{venture}}
+	if _, err := s.ApplySnapshot(ctx, second, second.Ventures, []string{"queued"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySnapshot(ctx, first, first.Ventures, []string{"queued"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.SnapshotStatus(ctx)
+	if err != nil || state.NextTick != nil || len(state.QueuedNotes) != 0 {
+		t.Fatalf("stale notes or schedule restored: %#v, %v", state, err)
+	}
 }
 
 func TestRemovedVentureIsRetainedAndMarkedMissing(t *testing.T) {

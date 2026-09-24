@@ -61,12 +61,22 @@ func (v *Venture) UnmarshalJSON(data []byte) error {
 }
 
 type Snapshot struct {
-	SnapshotID  string      `json:"snapshot_id"`
-	GeneratedAt time.Time   `json:"generated_at"`
-	Cycle       int         `json:"cycle"`
-	Source      string      `json:"source"`
-	Ventures    []Venture   `json:"ventures"`
-	Tokens      *TokenBlock `json:"tokens"`
+	SnapshotID  string              `json:"snapshot_id"`
+	GeneratedAt time.Time           `json:"generated_at"`
+	Cycle       int                 `json:"cycle"`
+	Source      string              `json:"source"`
+	Ventures    []Venture           `json:"ventures"`
+	Tokens      *TokenBlock         `json:"tokens"`
+	LastTick    *time.Time          `json:"last_tick"`
+	NextTick    *time.Time          `json:"next_tick"`
+	QueuedNotes map[string][]string `json:"queued_notes"`
+}
+
+type SnapshotStatus struct {
+	GeneratedAt *time.Time          `json:"generated_at"`
+	LastTick    *time.Time          `json:"last_tick"`
+	NextTick    *time.Time          `json:"next_tick"`
+	QueuedNotes map[string][]string `json:"queued_notes"`
 }
 
 type TokenAggregate struct {
@@ -152,14 +162,18 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 		result.TokenRecords = snapshot.Tokens.Records
 	}
 	for _, venture := range valid {
+		notes, err := json.Marshal(snapshot.QueuedNotes[venture.Slug])
+		if err != nil {
+			return ApplyResult{}, fmt.Errorf("encode queued notes: %w", err)
+		}
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO ventures (
 				slug, title, field, status, stage, kind, description, monetization,
 				abandoned_reason, abandoned_at_stage, url, repo_url, design_url,
-				created_at, last_seen_at, missing_since, snapshot_generated_at
+				created_at, last_seen_at, missing_since, snapshot_generated_at, queued_notes
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-				$14, now(), NULL, $15
+				$14, now(), NULL, $15, $16
 			)
 			ON CONFLICT (slug) DO UPDATE SET
 				title = EXCLUDED.title,
@@ -177,12 +191,13 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 				created_at = EXCLUDED.created_at,
 				last_seen_at = now(),
 				missing_since = NULL,
-				snapshot_generated_at = EXCLUDED.snapshot_generated_at
+				snapshot_generated_at = EXCLUDED.snapshot_generated_at,
+				queued_notes = EXCLUDED.queued_notes
 			WHERE EXCLUDED.snapshot_generated_at >= ventures.snapshot_generated_at`,
 			venture.Slug, venture.Title, venture.Field, venture.Status, venture.Stage,
 			venture.Kind, venture.Description, venture.Monetization, venture.AbandonedReason,
 			venture.AbandonedAtStage, venture.URL, venture.RepoURL, venture.DesignURL,
-			venture.CreatedAt, snapshot.GeneratedAt,
+			venture.CreatedAt, snapshot.GeneratedAt, notes,
 		)
 		if err != nil {
 			return ApplyResult{}, fmt.Errorf("upsert venture %q: %w", venture.Slug, err)
@@ -234,10 +249,10 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO ingest_snapshots (
-			snapshot_id, generated_at, venture_count, applied, skipped_stale, warnings, source, token_records
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			 snapshot_id, generated_at, venture_count, applied, skipped_stale, warnings, source, token_records, last_tick, next_tick
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		snapshot.SnapshotID, snapshot.GeneratedAt, len(snapshot.Ventures), result.Applied,
-		result.SkippedStale, warningsJSON, snapshot.Source, result.TokenRecords,
+		result.SkippedStale, warningsJSON, snapshot.Source, result.TokenRecords, snapshot.LastTick, snapshot.NextTick,
 	); err != nil {
 		return ApplyResult{}, fmt.Errorf("record snapshot: %w", err)
 	}
@@ -253,6 +268,37 @@ func (s *Store) ApplySnapshot(ctx context.Context, snapshot Snapshot, valid []Ve
 		return ApplyResult{}, fmt.Errorf("commit snapshot: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Store) SnapshotStatus(ctx context.Context) (SnapshotStatus, error) {
+	status := SnapshotStatus{QueuedNotes: map[string][]string{}}
+	err := s.pool.QueryRow(ctx, `
+		SELECT generated_at, last_tick, next_tick FROM ingest_snapshots
+		ORDER BY generated_at DESC NULLS LAST, id DESC LIMIT 1`,
+	).Scan(&status.GeneratedAt, &status.LastTick, &status.NextTick)
+	if err != nil && err != pgx.ErrNoRows {
+		return SnapshotStatus{}, fmt.Errorf("read snapshot status: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, "SELECT slug, queued_notes FROM ventures WHERE hidden = false AND missing_since IS NULL")
+	if err != nil {
+		return SnapshotStatus{}, fmt.Errorf("read queued notes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug string
+		var notes []byte
+		if err := rows.Scan(&slug, &notes); err != nil {
+			return SnapshotStatus{}, err
+		}
+		var values []string
+		if err := json.Unmarshal(notes, &values); err != nil {
+			return SnapshotStatus{}, err
+		}
+		if len(values) > 0 {
+			status.QueuedNotes[slug] = values
+		}
+	}
+	return status, rows.Err()
 }
 
 func tokenIdentityMatches(company CompanyTokens, ventures []VentureTokens) bool {

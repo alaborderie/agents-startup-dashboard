@@ -15,6 +15,7 @@
   var ageAtFetch = 0; // server-reported age at that moment
   var selectedRunId = null;
   var tickHandle = null;
+  var snapshotStatus = null;
 
   var els = {};
 
@@ -78,6 +79,58 @@
     tickHandle = window.setInterval(tick, 1000);
     poll();
     window.setInterval(poll, POLL_MS);
+    pollStatus();
+    window.setInterval(pollStatus, 15000);
+  }
+
+  function pollStatus() {
+    fetch("/snapshot-status.json", { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) { throw new Error("snapshot status " + response.status); }
+        return response.json();
+      })
+      .then(function (state) {
+        snapshotStatus = state;
+        renderStatus();
+      })
+      .catch(function () { /* The last snapshot remains visibly aged. */ });
+  }
+
+  function renderStatus() {
+    if (!snapshotStatus) { return; }
+    var last = $("last-tick");
+    var next = $("next-tick");
+    var generated = Date.parse(snapshotStatus.generated_at || "");
+    var stale = !isFinite(generated) || Date.now() - generated > 3 * 60 * 60 * 1000;
+    var lastTime = Date.parse(snapshotStatus.last_tick || "");
+    var nextTime = Date.parse(snapshotStatus.next_tick || "");
+    last.textContent = "Last tick: " + (isFinite(lastTime) ? new Date(lastTime).toLocaleString() : "not recorded");
+    if (stale) {
+      next.textContent = "Next tick: schedule stale (last snapshot " +
+        (isFinite(generated) ? new Date(generated).toLocaleString() : "unavailable") + ")";
+    } else if (!isFinite(nextTime)) {
+      next.textContent = "Next tick: timer inactive or schedule unavailable";
+    } else if (nextTime <= Date.now()) {
+      next.textContent = "Next tick: scheduled time passed · awaiting laptop update";
+    } else {
+      next.textContent = "Next tick: " + new Date(nextTime).toLocaleString() +
+        " · in " + formatDuration(Math.ceil((nextTime - Date.now()) / 1000));
+    }
+    var queued = snapshotStatus.queued_notes || {};
+    Array.prototype.forEach.call(document.querySelectorAll("[data-notes-for]"), function (node) {
+      var notes = queued[node.getAttribute("data-notes-for")];
+      node.textContent = "";
+      node.hidden = !Array.isArray(notes) || !notes.length;
+      if (node.hidden) { return; }
+      var heading = document.createElement("strong");
+      heading.textContent = "Queued for next worker";
+      node.appendChild(heading);
+      notes.forEach(function (text) {
+        var paragraph = document.createElement("p");
+        paragraph.textContent = text;
+        node.appendChild(paragraph);
+      });
+    });
   }
 
   function poll() {
@@ -118,6 +171,7 @@
   }
 
   function tick() {
+    renderStatus();
     if (!live) {
       return;
     }
