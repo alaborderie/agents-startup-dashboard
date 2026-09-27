@@ -16,6 +16,7 @@ import (
 )
 
 type stubStore struct {
+	hqMemory
 	ventures    []store.DashboardVenture
 	spend       store.DashboardSpend
 	lastSync    *time.Time

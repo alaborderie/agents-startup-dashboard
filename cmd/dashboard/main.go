@@ -61,6 +61,13 @@ func run() error {
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	// Shutdown closes the listeners, then runs this: it ends the hijacked HQ
+	// WebSockets, which Shutdown cannot see, and answers parked bridge polls.
+	server.RegisterOnShutdown(app.Close)
+
+	appContext, stopApp := context.WithCancel(context.Background())
+	defer stopApp()
+	go app.Run(appContext)
 
 	serverErrors := make(chan error, 1)
 	go func() {
