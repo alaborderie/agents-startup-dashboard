@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alaborderie/agents-startup-dashboard/internal/store"
 	"github.com/coder/websocket"
@@ -23,6 +25,18 @@ type hqMemory struct {
 	sessions map[string]time.Time
 	commands []*store.Command
 	clients  map[string]string
+	claims   int
+}
+
+// postgresText fails like a Postgres text column: it rejects NUL and invalid
+// UTF-8, so a handler that forwards either is caught here too.
+func postgresText(values ...string) error {
+	for _, value := range values {
+		if !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+			return errors.New("invalid byte sequence for encoding UTF8")
+		}
+	}
+	return nil
 }
 
 type memoryLink struct {
@@ -67,7 +81,10 @@ func (m *hqMemory) ConsumeLoginLink(_ context.Context, hash string) (bool, error
 	return true, nil
 }
 
-func (m *hqMemory) CreateSession(_ context.Context, id string, expires time.Time, _ string) error {
+func (m *hqMemory) CreateSession(_ context.Context, id string, expires time.Time, userAgent string) error {
+	if err := postgresText(userAgent); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.sessions == nil {
@@ -118,6 +135,7 @@ func (m *hqMemory) CreateCommand(_ context.Context, command store.NewCommand) (s
 func (m *hqMemory) ClaimCommands(_ context.Context, redeliver time.Duration, limit int) ([]store.Command, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.claims++
 	claimed := []store.Command{}
 	now := time.Now()
 	for _, command := range m.commands {
@@ -134,6 +152,9 @@ func (m *hqMemory) ClaimCommands(_ context.Context, redeliver time.Duration, lim
 }
 
 func (m *hqMemory) FinishCommand(_ context.Context, id, status, message string) (store.Command, bool, bool, error) {
+	if err := postgresText(message); err != nil {
+		return store.Command{}, false, false, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, command := range m.commands {
@@ -618,5 +639,30 @@ func TestSlowSubscriberIsDroppedInsteadOfBlockingBroadcasts(t *testing.T) {
 	}
 	if h.hasSubscribers() {
 		t.Fatal("dropped subscriber still registered")
+	}
+}
+
+func TestLoginSurvivesAUserAgentThatIsNotUTF8(t *testing.T) {
+	app, stub := newHQApp(t)
+	token := strings.Repeat("d", 43)
+	_ = stub.CreateLoginLink(context.Background(), hashHex(token), time.Now().Add(time.Minute))
+	request := httptest.NewRequest(http.MethodPost, "/hq/login", strings.NewReader(`{"token":"`+token+`"}`))
+	request.Header.Set("User-Agent", "Mozilla/5.0 \xff\xfe")
+	if response := serve(app, request); response.Code != http.StatusNoContent {
+		t.Fatalf("login with a non-UTF-8 user agent: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCommandResultDropsNULFromTheMessage(t *testing.T) {
+	app, stub := newHQApp(t)
+	_, _, _ = stub.CreateCommand(context.Background(), store.NewCommand{ID: "c_nul", Kind: "tick"})
+	response := serve(app, ingestRequest(http.MethodPost, "/ingest/commands/c_nul/result",
+		`{"status":"failed","message":"tick failed: \u0000garbage"}`))
+	var result struct{ Command store.Command }
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK {
+		t.Fatalf("result with NUL: %d %s", response.Code, response.Body.String())
+	}
+	if result.Command.Status != "failed" || result.Command.Message != "tick failed: garbage" {
+		t.Fatalf("result = %+v", result.Command)
 	}
 }

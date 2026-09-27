@@ -211,7 +211,9 @@ func (a *App) hqLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
-	userAgent := r.UserAgent()
+	// Header values may carry any byte but NUL; a text column accepts only
+	// UTF-8, and the link is already spent if this insert fails.
+	userAgent := strings.ToValidUTF8(r.UserAgent(), "")
 	if len(userAgent) > 200 {
 		userAgent = strings.ToValidUTF8(userAgent[:200], "")
 	}
@@ -719,7 +721,9 @@ func (a *App) commandResult(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "status must be done or failed")
 		return
 	}
-	message := strings.ToValidUTF8(body.Message, "")
+	// A text column rejects NUL; the bridge may relay raw process output, and
+	// a result the server cannot store would leave the command unfinished.
+	message := strings.ReplaceAll(strings.ToValidUTF8(body.Message, ""), "\x00", "")
 	if utf8.RuneCountInString(message) > 2000 {
 		message = string([]rune(message)[:2000])
 	}
