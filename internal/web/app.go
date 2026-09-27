@@ -61,6 +61,8 @@ type App struct {
 	assets      map[string]asset // by file name
 	hub         *hub
 	now         func() time.Time
+	// wsPing is how often an HQ socket is pinged and its session re-checked.
+	wsPing time.Duration
 }
 
 func contentHashPath(name, extension string, body []byte) string {
@@ -96,6 +98,7 @@ func New(dataStore DataStore, ingestToken string) (*App, error) {
 		template:    tmpl,
 		assets:      assets,
 		now:         time.Now,
+		wsPing:      wsPingInterval,
 	}
 	app.hub = newHub(func() time.Time { return app.now() })
 	return app, nil

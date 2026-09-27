@@ -542,7 +542,7 @@ func (a *App) hqWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ping := time.NewTicker(wsPingInterval)
+	ping := time.NewTicker(a.wsPing)
 	defer ping.Stop()
 	for {
 		select {

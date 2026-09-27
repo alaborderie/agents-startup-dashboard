@@ -779,3 +779,35 @@ func TestCloseEndsSocketsIncludingOnesThatConnectAfterwards(t *testing.T) {
 		t.Fatalf("late socket closed with %v, want going away", code)
 	}
 }
+
+// A socket outlives its handshake, so logging out (or the session expiring)
+// must end it at the next ping rather than keep streaming private state.
+func TestWebSocketEndsWhenTheSessionEnds(t *testing.T) {
+	app, _ := newHQApp(t)
+	app.wsPing = 20 * time.Millisecond
+	server := httptest.NewServer(app.Handler())
+	defer server.Close()
+	cookie := login(t, app)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	headers := http.Header{"Cookie": {cookie.Name + "=" + cookie.Value}, "Origin": {server.URL}}
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/hq/ws", &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	if _, _, err := conn.Read(ctx); err != nil { // the initial state
+		t.Fatal(err)
+	}
+	if response := serve(app, authed(http.MethodPost, "/hq/logout", "", cookie)); response.Code != http.StatusNoContent {
+		t.Fatalf("logout %d", response.Code)
+	}
+	for {
+		if _, _, err := conn.Read(ctx); err != nil {
+			if code := websocket.CloseStatus(err); code != wsSessionEnded {
+				t.Fatalf("socket ended with %v (%v), want %d", code, err, wsSessionEnded)
+			}
+			return
+		}
+	}
+}
