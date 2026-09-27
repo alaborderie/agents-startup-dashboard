@@ -22,7 +22,7 @@ import (
 
 const maxRequestBody = 1 << 20
 
-//go:embed templates/*.html static/app.css static/app.js
+//go:embed templates/*.html static/app.css static/app.js static/hq.css static/hq.js
 var webFiles embed.FS
 
 type DataStore interface {
@@ -33,17 +33,34 @@ type DataStore interface {
 	ApplyLive(context.Context, store.LivePayload) error
 	Live(context.Context) (store.LiveState, error)
 	SnapshotStatus(context.Context) (store.SnapshotStatus, error)
+
+	ApplyHQ(context.Context, time.Time, json.RawMessage) (bool, error)
+	HQ(context.Context) (*store.HQState, error)
+	CreateLoginLink(context.Context, string, time.Time) error
+	ConsumeLoginLink(context.Context, string) (bool, error)
+	CreateSession(context.Context, string, time.Time, string) error
+	ValidSession(context.Context, string) (bool, error)
+	DeleteSession(context.Context, string) error
+	CreateCommand(context.Context, store.NewCommand) (store.Command, bool, error)
+	ClaimCommands(context.Context, time.Duration, int) ([]store.Command, error)
+	FinishCommand(context.Context, string, string, string) (store.Command, bool, bool, error)
+	RecentCommands(context.Context, int) ([]store.Command, error)
+}
+
+// asset is one embedded static file served at a content-hashed path.
+type asset struct {
+	path        string
+	contentType string
+	body        []byte
 }
 
 type App struct {
-	store          DataStore
-	ingestToken    string
-	template       *template.Template
-	stylesheet     []byte
-	stylesheetPath string
-	script         []byte
-	scriptPath     string
-	now            func() time.Time
+	store       DataStore
+	ingestToken string
+	template    *template.Template
+	assets      map[string]asset // by file name
+	hub         *hub
+	now         func() time.Time
 }
 
 func contentHashPath(name, extension string, body []byte) string {
@@ -52,13 +69,18 @@ func contentHashPath(name, extension string, body []byte) string {
 }
 
 func New(dataStore DataStore, ingestToken string) (*App, error) {
-	stylesheet, err := webFiles.ReadFile("static/app.css")
-	if err != nil {
-		return nil, err
-	}
-	script, err := webFiles.ReadFile("static/app.js")
-	if err != nil {
-		return nil, err
+	assets := make(map[string]asset)
+	for _, name := range []string{"app.css", "app.js", "hq.css", "hq.js"} {
+		body, err := webFiles.ReadFile("static/" + name)
+		if err != nil {
+			return nil, err
+		}
+		base, extension, _ := strings.Cut(name, ".")
+		contentType := "text/css; charset=utf-8"
+		if extension == "js" {
+			contentType = "text/javascript; charset=utf-8"
+		}
+		assets[name] = asset{path: contentHashPath(base, extension, body), contentType: contentType, body: body}
 	}
 
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
@@ -68,16 +90,19 @@ func New(dataStore DataStore, ingestToken string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{
-		store:          dataStore,
-		ingestToken:    ingestToken,
-		template:       tmpl,
-		stylesheet:     stylesheet,
-		stylesheetPath: contentHashPath("app", "css", stylesheet),
-		script:         script,
-		scriptPath:     contentHashPath("app", "js", script),
-		now:            time.Now,
-	}, nil
+	app := &App{
+		store:       dataStore,
+		ingestToken: ingestToken,
+		template:    tmpl,
+		assets:      assets,
+		now:         time.Now,
+	}
+	app.hub = newHub(func() time.Time { return app.now() })
+	return app, nil
+}
+
+func (a *App) assetPath(name string) string {
+	return a.assets[name].path
 }
 
 func (a *App) Handler() http.Handler {
@@ -89,6 +114,31 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /snapshot-status.json", a.snapshotStatusJSON)
 	mux.Handle("POST /ingest", http.TimeoutHandler(http.HandlerFunc(a.ingest), 20*time.Second, ""))
 	mux.Handle("POST /ingest/live", http.TimeoutHandler(http.HandlerFunc(a.ingestLive), 20*time.Second, ""))
+
+	// Laptop side of the HQ: private state, magic links and the command queue.
+	// The command poll is a long poll, so it cannot sit behind TimeoutHandler.
+	mux.Handle("POST /ingest/hq", http.TimeoutHandler(http.HandlerFunc(a.ingestHQ), 20*time.Second, ""))
+	mux.HandleFunc("POST /ingest/login-links", a.ingestLoginLink)
+	mux.HandleFunc("GET /ingest/commands", a.pollCommands)
+	mux.HandleFunc("POST /ingest/commands/{id}/result", a.commandResult)
+
+	// Founder side of the HQ. Every state-changing browser request must be
+	// same-origin; the WebSocket handshake checks Origin itself.
+	hq := http.NewServeMux()
+	hq.HandleFunc("GET /hq", a.hqPage)
+	hq.HandleFunc("GET /hq/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/hq", http.StatusMovedPermanently)
+	})
+	hq.HandleFunc("GET /hq/login", a.hqLoginPage)
+	hq.HandleFunc("POST /hq/login", a.hqLogin)
+	hq.HandleFunc("POST /hq/logout", a.hqLogout)
+	hq.HandleFunc("GET /hq/api/state", a.requireSession(a.hqStateJSON))
+	hq.HandleFunc("POST /hq/api/commands", a.requireSession(a.hqCommand))
+	hq.HandleFunc("GET /hq/ws", a.hqWebSocket)
+	protected := http.NewCrossOriginProtection().Handler(hq)
+	mux.Handle("/hq", protected)
+	mux.Handle("/hq/", protected)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/static/") {
 			a.serveStatic(w, r)
@@ -115,14 +165,13 @@ func (a *App) serveStatic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	switch r.URL.Path {
-	case a.stylesheetPath:
-		a.writeAsset(w, "text/css; charset=utf-8", a.stylesheet)
-	case a.scriptPath:
-		a.writeAsset(w, "text/javascript; charset=utf-8", a.script)
-	default:
-		http.NotFound(w, r)
+	for _, file := range a.assets {
+		if r.URL.Path == file.path {
+			a.writeAsset(w, file.contentType, file.body)
+			return
+		}
 	}
+	http.NotFound(w, r)
 }
 
 func (a *App) writeAsset(w http.ResponseWriter, contentType string, body []byte) {
@@ -302,8 +351,8 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := buildPageData(ventures, spend)
 	view.LastSync = syncLabel(a.now(), lastSync)
-	view.StylesheetPath = a.stylesheetPath
-	view.ScriptPath = a.scriptPath
+	view.StylesheetPath = a.assetPath("app.css")
+	view.ScriptPath = a.assetPath("app.js")
 	if err := a.template.ExecuteTemplate(w, "index.html", view); err != nil {
 		return
 	}
@@ -535,6 +584,10 @@ func (a *App) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if result.Status == "applied" {
+		a.broadcastVentures(r.Context())
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if result.Status == "unchanged" {
 		_ = json.NewEncoder(w).Encode(struct {
@@ -681,6 +734,7 @@ func (a *App) ingestLive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "live ingest failed", http.StatusInternalServerError)
 		return
 	}
+	a.broadcastLive(payload)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {

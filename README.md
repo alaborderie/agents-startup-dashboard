@@ -109,14 +109,35 @@ over three hours old, the page labels the schedule unavailable or stale rather
 than predicting a firing time. **Instructions are public text** and rendered as
 plain text, without HTML interpretation.
 
+### HQ control room
+
+`/hq` is the founder's private, real-time view of the company, and the web
+equivalent of the Telegram bot: approve or reject gates, request changes, add
+notes, answer blocked ventures, suggest subjects for future ventures and start
+a tick. The push-only rule still holds. The laptop pushes a private HQ document
+(`POST /ingest/hq`) next to the public snapshot, and every founder action is
+**queued** in Postgres and **pulled** by `bin/hq-bridge.py` on the laptop, which
+long-polls `GET /ingest/commands`, runs the same code the Telegram bot runs, and
+reports the result. Browsers receive every push and every command result over
+a WebSocket (`/hq/ws`).
+
+There is no password. Sending `/web` to the company Telegram bot (or running
+`bin/hq-bridge.py login` on the laptop) mints a single-use link valid for 15
+minutes; the token travels in the URL fragment, so it never reaches a log or a
+link-preview bot, and only its SHA-256 is stored. Unlike the public page, the HQ
+shows gate artifacts, blocked questions and activity, so it is session-only.
+The full protocol is in [`docs/hq.md`](docs/hq.md).
+
 ## Stack
 
 - Go 1.27, stdlib `net/http` (`http.ServeMux` method+path patterns). No router.
-- `html/template` + `embed.FS`. The content-hashed stylesheet and a single
-  vanilla script are embedded in the binary and the dashboard uses one card
-  layout at every width. **No build step, no bundler, no framework** — the live
-  panel is progressive enhancement over server-rendered HTML and degrades to the
-  static page without JS.
+- `html/template` + `embed.FS`. The content-hashed stylesheets and vanilla
+  scripts are embedded in the binary and the dashboard uses one card layout at
+  every width. **No build step, no bundler, no framework** — the live panel is
+  progressive enhancement over server-rendered HTML and degrades to the static
+  page without JS. The HQ page is rendered by its own script.
+- WebSockets via `github.com/coder/websocket`; the hub is in-process because
+  the deployment runs one replica.
 - Postgres via `jackc/pgx/v5`, pool max 4.
 - **Schema migrations are embedded in the binary and run in-process at startup**,
   idempotently. They are deliberately *not* a Postgres `initdb` ConfigMap: that
@@ -136,6 +157,16 @@ plain text, without HTML interpretation.
 | `GET /snapshot-status.json` | public | Last/next timer firing and pending venture instructions. `Cache-Control: no-store`, `X-Robots-Tag: noindex`. |
 | `POST /ingest` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | Venture snapshot write path. |
 | `POST /ingest/live` | `Authorization: Bearer $DASHBOARD_INGEST_TOKEN` | Live running-set write path. Replace-whole-set semantics. |
+| `GET /hq` | session | The founder's private control room (login screen without a session). `no-store`, strict CSP. |
+| `GET /hq/login`, `POST /hq/login` | one-time link | Exchanges a magic-link token (URL fragment) for a 30-day `HttpOnly` session cookie. |
+| `POST /hq/logout` | session | Ends the session. |
+| `GET /hq/api/state` | session | Full HQ state (public ventures, live runs, private HQ document, commands, bridge). |
+| `POST /hq/api/commands` | session, same-origin | Queues a founder action (approve, changes, reject, note, answer, resume, suggest, tick). |
+| `GET /hq/ws` | session, same-origin | WebSocket: full state on connect, then every change. |
+| `POST /ingest/hq` | bearer | The laptop's private HQ document (≤ 2 MB). |
+| `POST /ingest/login-links` | bearer | Records the SHA-256 of a magic-link token (≤ 15 min). |
+| `GET /ingest/commands?wait=25` | bearer | The laptop bridge's long poll for queued commands. |
+| `POST /ingest/commands/{id}/result` | bearer | The laptop's result for one command. |
 
 ### Ingest request
 
@@ -276,7 +307,8 @@ export DASHBOARD_INGEST_TOKEN='local-dev-token-not-a-real-secret'
 ```
 cmd/dashboard/      main: config, pool, routes, graceful shutdown
 internal/store/     pgx access, embedded migrations, snapshot transaction
-internal/web/       html/template handlers and the embedded template + CSS + JS
+internal/web/       html/template handlers, the HQ (hq.go, hub.go), embedded templates + CSS + JS
+docs/hq.md          HQ control room protocol (laptop ⇄ server ⇄ browser)
 testdata/           sample snapshots used by tests and by curl
 Dockerfile          multi-stage; static binary on a minimal base
 .github/workflows/  build and push ghcr.io/alaborderie/agents-startup-dashboard

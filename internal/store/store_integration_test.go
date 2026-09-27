@@ -702,7 +702,7 @@ func TestApplyLiveMirrorsRunningSet(t *testing.T) {
 
 func resetDatabase(t *testing.T) {
 	t.Helper()
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE ventures, ingest_snapshots, venture_tokens, role_tokens, company_tokens, live_runs, live_state RESTART IDENTITY"); err != nil {
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE ventures, ingest_snapshots, venture_tokens, role_tokens, company_tokens, live_runs, live_state, hq_state, hq_login_links, hq_sessions, hq_commands RESTART IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := testPool.Exec(context.Background(), "DELETE FROM schema_migrations WHERE name LIKE 'proof/%'"); err != nil {

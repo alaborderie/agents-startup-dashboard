@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Agent Startup HQ</title>
+  <link rel="stylesheet" href="{{.StylesheetPath}}">
+  <script defer src="{{.ScriptPath}}"></script>
+</head>
+<body data-page="{{if .Authenticated}}hq{{else}}login-required{{end}}">
+  <main>
+    <h1>Agent Startup HQ</h1>
+    {{if .Authenticated}}
+      <p id="hq-connection">connecting…</p>
+      <pre id="hq-state"></pre>
+    {{else}}
+      <p>Send <code>/web</code> to the company Telegram bot to receive a one-time login link. Links expire after 15 minutes.</p>
+    {{end}}
+  </main>
+</body>
+</html>

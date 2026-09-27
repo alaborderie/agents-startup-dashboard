@@ -62,6 +62,10 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	appContext, stopApp := context.WithCancel(context.Background())
+	defer stopApp()
+	go app.Run(appContext)
+
 	serverErrors := make(chan error, 1)
 	go func() {
 		log.Printf("dashboard listening on :%s", config.Port)
@@ -80,6 +84,8 @@ func run() error {
 	case <-signalContext.Done():
 	}
 
+	// Hijacked WebSocket connections are invisible to Shutdown; close them first.
+	app.Close()
 	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdownContext); err != nil {
