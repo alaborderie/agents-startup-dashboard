@@ -474,23 +474,34 @@ func TestBridgeLongPollDeliversQueuedCommandsAndRecordsResults(t *testing.T) {
 }
 
 func TestLongPollWakesWhenACommandIsQueued(t *testing.T) {
-	app, _ := newHQApp(t)
-	cookie := login(t, app)
-	done := make(chan []store.Command, 1)
-	go func() {
-		var polled struct{ Commands []store.Command }
-		_ = json.Unmarshal(serve(app, ingestRequest(http.MethodGet, "/ingest/commands?wait=10", "")).Body.Bytes(), &polled)
-		done <- polled.Commands
-	}()
-	time.Sleep(100 * time.Millisecond)
-	serve(app, authed(http.MethodPost, "/hq/api/commands", `{"kind":"tick"}`, cookie))
-	select {
-	case commands := <-done:
-		if len(commands) != 1 || commands[0].Kind != "tick" {
-			t.Fatalf("woken poll returned %+v", commands)
+	// An absurd wait must clamp to the 30 s maximum, not overflow into an
+	// instant return that would make the bridge spin.
+	for _, wait := range []string{"10", "9223372037"} {
+		app, stub := newHQApp(t)
+		cookie := login(t, app)
+		done := make(chan []store.Command, 1)
+		go func() {
+			var polled struct{ Commands []store.Command }
+			_ = json.Unmarshal(serve(app, ingestRequest(http.MethodGet, "/ingest/commands?wait="+wait, "")).Body.Bytes(), &polled)
+			done <- polled.Commands
+		}()
+		// Queue only once the poll found the queue empty, so the command can
+		// reach it through the wake-up alone (the recheck is 15 s away).
+		waitForClaims(t, stub, 1)
+		select {
+		case commands := <-done:
+			t.Fatalf("wait=%s: poll returned %+v before anything was queued", wait, commands)
+		case <-time.After(50 * time.Millisecond):
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("long poll did not wake on a new command")
+		serve(app, authed(http.MethodPost, "/hq/api/commands", `{"kind":"tick"}`, cookie))
+		select {
+		case commands := <-done:
+			if len(commands) != 1 || commands[0].Kind != "tick" {
+				t.Fatalf("wait=%s: woken poll returned %+v", wait, commands)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("wait=%s: long poll did not wake on a new command", wait)
+		}
 	}
 }
 

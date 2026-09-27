@@ -670,7 +670,9 @@ func (a *App) pollCommands(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "wait must be a non-negative number of seconds")
 			return
 		}
-		wait = min(time.Duration(seconds)*time.Second, maxPollWait)
+		// Clamp before converting: a huge value would overflow to a negative
+		// duration and return at once.
+		wait = time.Duration(min(seconds, int(maxPollWait/time.Second))) * time.Second
 	}
 	if a.hub.pollStarted() {
 		a.broadcastBridge(a.hub.bridge())
