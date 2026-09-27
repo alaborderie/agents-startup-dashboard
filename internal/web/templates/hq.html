@@ -2,21 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow">
-  <title>Agent Startup HQ</title>
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#101119">
+  <title>HQ · Agent startup</title>
   <link rel="stylesheet" href="{{.StylesheetPath}}">
   <script defer src="{{.ScriptPath}}"></script>
 </head>
-<body data-page="{{if .Authenticated}}hq{{else}}login-required{{end}}">
-  <main>
-    <h1>Agent Startup HQ</h1>
-    {{if .Authenticated}}
-      <p id="hq-connection">connecting…</p>
-      <pre id="hq-state"></pre>
-    {{else}}
-      <p>Send <code>/web</code> to the company Telegram bot to receive a one-time login link. Links expire after 15 minutes.</p>
-    {{end}}
+{{if .Authenticated}}
+<body class="hq" data-page="hq">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar" id="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/hq" aria-label="HQ home">
+        <span class="brand-mark" aria-hidden="true">HQ</span>
+        <span class="brand-text">
+          <span class="brand-name">Control room</span>
+          <span class="brand-sub" id="brand-sub">night shift</span>
+        </span>
+      </a>
+      <div class="status-strip" id="status-strip" aria-label="Company status">
+        <span class="pill pill-conn" id="conn-pill" data-state="connecting"><span class="dot" aria-hidden="true"></span><span class="pill-label">Connecting…</span></span>
+        <span class="pill pill-bridge" id="bridge-pill" data-state="unknown"><span class="dot" aria-hidden="true"></span><span class="pill-label">Laptop: unknown</span></span>
+        <span class="tick-readout" id="tick-readout" aria-live="off">
+          <span class="tick-state" id="tick-state">Tick: waiting for data</span>
+          <span class="tick-next" id="tick-next"></span>
+        </span>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="btn btn-tick" id="tick-btn" disabled>
+          <span class="btn-icon" aria-hidden="true" id="tick-btn-icon"></span>
+          <span class="btn-label" id="tick-btn-label">Run a tick now</span>
+        </button>
+        <button type="button" class="btn btn-ghost btn-logout" id="logout-btn">Sign out</button>
+      </div>
+    </div>
+  </header>
+  <div class="banners" id="banners"></div>
+  <main id="main" class="layout" tabindex="-1">
+    <section class="panel panel-inbox" id="inbox" aria-labelledby="inbox-h">
+      <header class="panel-head">
+        <h2 id="inbox-h"><span class="h-glyph" aria-hidden="true"></span>Needs you</h2>
+        <span class="count-badge" id="inbox-count" hidden></span>
+      </header>
+      <div class="panel-body" id="inbox-body"><p class="loading-line">Loading the founder's inbox…</p></div>
+    </section>
+
+    <section class="panel panel-crew" id="crew" aria-labelledby="crew-h">
+      <header class="panel-head">
+        <h2 id="crew-h"><span class="h-glyph" aria-hidden="true"></span>The crew</h2>
+        <span class="panel-meta" id="crew-meta"></span>
+      </header>
+      <div class="panel-body" id="crew-body"></div>
+    </section>
+
+    <section class="panel panel-pipeline" id="pipeline" aria-labelledby="pipeline-h">
+      <header class="panel-head">
+        <h2 id="pipeline-h"><span class="h-glyph" aria-hidden="true"></span>Pipeline</h2>
+        <span class="panel-meta" id="pipeline-meta"></span>
+      </header>
+      <div class="panel-body" id="pipeline-body"></div>
+    </section>
+
+    <section class="panel panel-activity" id="activity" aria-labelledby="activity-h">
+      <header class="panel-head">
+        <h2 id="activity-h"><span class="h-glyph" aria-hidden="true"></span>Activity</h2>
+        <span class="panel-meta" id="activity-meta"></span>
+      </header>
+      <div class="panel-body" id="activity-body"></div>
+    </section>
+
+    <section class="panel panel-ideas" id="ideas" aria-labelledby="ideas-h">
+      <header class="panel-head">
+        <h2 id="ideas-h"><span class="h-glyph" aria-hidden="true"></span>Idea inbox</h2>
+      </header>
+      <div class="panel-body" id="ideas-body"></div>
+    </section>
+
+    <section class="panel panel-archive" id="archive" aria-labelledby="archive-h">
+      <details class="archive-details" id="archive-details">
+        <summary class="panel-head archive-summary">
+          <h2 id="archive-h"><span class="h-glyph" aria-hidden="true"></span>Archive</h2>
+          <span class="panel-meta" id="archive-meta"></span>
+          <span class="chev" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body" id="archive-body"></div>
+      </details>
+    </section>
+  </main>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+    <header class="drawer-head">
+      <button type="button" class="icon-btn drawer-back" id="drawer-back" aria-label="Back to venture" hidden></button>
+      <div class="drawer-heading">
+        <p class="drawer-kicker" id="drawer-kicker"></p>
+        <h2 id="drawer-title" tabindex="-1">Venture</h2>
+      </div>
+      <button type="button" class="icon-btn drawer-close" id="drawer-close" aria-label="Close panel"></button>
+    </header>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+  <div class="sr-only" id="alerts" role="alert" aria-live="assertive"></div>
+  <div class="burst-layer" id="burst-layer" aria-hidden="true"></div>
+  <noscript><p class="noscript">The control room needs JavaScript to receive live updates.</p></noscript>
+</body>
+{{else}}
+<body class="hq hq-auth" data-page="login">
+  <main class="auth-wrap">
+    <section class="auth-card" aria-labelledby="auth-h">
+      <div class="auth-parade" id="auth-parade" aria-hidden="true"></div>
+      <p class="auth-kicker">Agent startup · private HQ</p>
+      <h1 id="auth-h">The crew is on shift. You need a pass.</h1>
+      <p class="auth-lede">HQ has no password. You get in with a one-time link from the company Telegram bot.</p>
+      <ol class="auth-steps">
+        <li><span class="step-n" aria-hidden="true">1</span><span>Open the company bot in Telegram.</span></li>
+        <li><span class="step-n" aria-hidden="true">2</span><span>Send <kbd>/web</kbd>.</span></li>
+        <li><span class="step-n" aria-hidden="true">3</span><span>Tap the link it replies with. It works once and expires after 15&nbsp;minutes.</span></li>
+      </ol>
+      <p class="auth-foot">Your session then lasts 30 days on this device.</p>
+    </section>
   </main>
 </body>
+{{end}}
 </html>
