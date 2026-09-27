@@ -247,7 +247,7 @@ func TestHQPageWithoutSessionRendersLoginScreenWithStrictHeaders(t *testing.T) {
 		t.Fatalf("status %d", response.Code)
 	}
 	body := response.Body.String()
-	if !strings.Contains(body, `data-page="login-required"`) || !strings.Contains(body, "/web") {
+	if !strings.Contains(body, `data-page="login"`) || !strings.Contains(body, "/web") {
 		t.Fatalf("login screen missing: %s", body)
 	}
 	csp := response.Header().Get("Content-Security-Policy")

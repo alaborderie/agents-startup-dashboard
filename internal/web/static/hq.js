@@ -443,6 +443,13 @@
     };
   }
 
+  // A killed or archived venture can keep a stale gate/blocked flag on disk; it
+  // no longer asks the founder anything.
+  var TERMINAL_STAGES = ["KILLED", "ARCHIVED"];
+  function needsFounder(v) {
+    return !!(v && (v.gate || v.blocked) && TERMINAL_STAGES.indexOf(v.stage) < 0);
+  }
+
   function activeVentures() {
     var d = doc();
     if (d && Array.isArray(d.ventures)) { return d.ventures.filter(function (v) { return v && v.slug; }); }
@@ -619,6 +626,8 @@
   function upsertCommand(c, quiet) {
     if (!c || typeof c !== "object" || !c.id) { return; }
     var prev = S.commands.get(c.id);
+    // A finished command is final: a late redelivery ("delivered") must not revive it.
+    if (prev && isFinal(prev) && !isFinal(c)) { return; }
     S.commands.set(c.id, Object.assign({}, prev || {}, c));
     if (!quiet && prev && !isFinal(prev) && isFinal(c)) { onCommandFinished(c); }
   }
@@ -807,10 +816,18 @@
   // ------------------------------------------------------------------ render scheduling
 
   var renderQueued = false;
+  // rAF batches renders with paint; the timer covers views that are visible but
+  // never painted (embedded previews), where rAF would hold every update back.
   function scheduleRender() {
     if (renderQueued) { return; }
     renderQueued = true;
-    window.requestAnimationFrame(function () { renderQueued = false; renderAll(); });
+    var run = function () {
+      if (!renderQueued) { return; }
+      renderQueued = false;
+      renderAll();
+    };
+    window.requestAnimationFrame(run);
+    window.setTimeout(run, 250);
   }
 
   function renderAll() {
@@ -1080,7 +1097,7 @@
   // ------------------------------------------------------------------ inbox
 
   function inboxItems() {
-    return activeVentures().filter(function (v) { return v.gate || v.blocked; })
+    return activeVentures().filter(needsFounder)
       .sort(function (a, b) {
         var ga = a.gate ? 0 : 1;
         var gb = b.gate ? 0 : 1;
@@ -1715,7 +1732,7 @@
     $("drawer-kicker").textContent = [stageLabel(v.stage), v.kind].filter(Boolean).join(" · ");
     $("drawer-title").textContent = v.title || v.slug;
     var frag = document.createDocumentFragment();
-    var asks = !!(v.gate || v.blocked);
+    var asks = needsFounder(v);
     var metaBits = [h("span", { class: "chip", text: stageLabel(v.stage) }), kindChip(v.kind), v.field ? h("span", { class: "chip", text: str(v.field) }) : null,
       v.priority ? h("span", { class: "chip", text: "priority " + v.priority }) : null, meter(v),
       v.created ? h("span", { class: "chip" }, "opened ", timeEl(v.created, "")) : null,
@@ -1727,7 +1744,7 @@
     if (v.suggestion && v.suggestion.text) {
       put(frag, h("p", { class: "note is-queued", text: "Opened from your suggestion: “" + str(v.suggestion.text) + "”" }));
     }
-    if (v.gate || v.blocked) { put(frag, dsec("Needs you", [askCard(v, "drawer")])); }
+    if (asks) { put(frag, dsec("Needs you", [askCard(v, "drawer")])); }
     var live = runsFor(slug);
     put(frag, dsec("Working on it now", live.length ? [h("div", { class: "drawer-live" }, live.map(function (r) {
       var b = h("button", { type: "button", class: "live-btn", "data-fk": "dlive:" + r.run_id, on: { click: function () { openLog(r.run_id); } } },
