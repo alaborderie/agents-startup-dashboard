@@ -18,6 +18,14 @@
 
   // ------------------------------------------------------------------ constants
 
+  // Lookup tables keyed by server data have no prototype, so a key such as
+  // "constructor" or "__proto__" misses instead of returning an Object method.
+  function dict(obj) {
+    var d = Object.create(null);
+    Object.keys(obj || {}).forEach(function (k) { d[k] = obj[k]; });
+    return d;
+  }
+
   var STAGES = [
     { id: "IDEATION", label: "Ideation", role: "inventor", phase: 0 },
     { id: "SCREENED", label: "Screening", role: "screener", phase: 0 },
@@ -37,31 +45,32 @@
     { id: "GTM", label: "Go to market", role: "documentation", phase: 3 }
   ];
   var PHASES = ["Discover", "Plan", "Build", "Ship"];
-  var STAGE_BY_ID = {};
+  var STAGE_BY_ID = dict();
   STAGES.forEach(function (s, i) { s.index = i; STAGE_BY_ID[s.id] = s; });
 
   var FALLBACK_ROLES = ["inventor", "screener", "analyst", "architect", "pm", "designer",
     "developer", "reviewer", "security", "devops", "sales", "documentation", "doctor", "triage"];
 
-  var GATES = {
+  var GATES = dict({
     build: { kicker: "Gate 1 · build go/no-go", ask: "The business case is in. Approve to start architecture and the build, or send it back." },
     design: { kicker: "Design review", ask: "The designer wants your eyes on the canvas. Approve it to start building." },
     deploy: { kicker: "Gate 2 · deploy go/no-go", ask: "Infra is ready. Approve to go live." }
-  };
+  });
 
-  var CMD_LABEL = {
+  var CMD_LABEL = dict({
     approve: "Approve", changes: "Request changes", reject: "Reject", note: "Note",
     answer: "Answer & resume", resume: "Resume", suggest: "Idea", tick: "Tick"
-  };
-  var ACTION_KINDS = { approve: 1, changes: 1, reject: 1, answer: 1, resume: 1 };
-  var TEXT_LIMIT = { changes: 3000, reject: 3000, note: 3000, answer: 3000, suggest: 2000 };
+  });
+  var ACTION_KINDS = dict({ approve: 1, changes: 1, reject: 1, answer: 1, resume: 1 });
+  var TEXT_LIMIT = dict({ changes: 3000, reject: 3000, note: 3000, answer: 3000, suggest: 2000 });
+  var CMD_STATUSES = dict({ queued: 1, delivered: 1, done: 1, failed: 1 });
   var HQ_STALE_S = 180;
   var LIVE_STALE_S = 90;
   var POLL_MS = 10000;
 
   // ------------------------------------------------------------------ icons
 
-  var ICONS = {
+  var ICONS = dict({
     bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/>',
     funnel: '<path d="M3 4h18l-7 8.5V19l-4 2v-8.5z"/>',
     bars: '<path d="M5 20V11M11 20V5M17 20v-7M3 20h18"/>',
@@ -100,7 +109,7 @@
     send: '<path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/>',
     question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17v.1"/>',
     log: '<path d="M4 6h16M4 12h10M4 18h13"/>'
-  };
+  });
 
   function svgFrom(markup) {
     var t = document.createElement("template");
@@ -465,7 +474,7 @@
     var d = doc();
     var list = arr(d && d.roles).filter(function (r) { return r && r.role; });
     if (!list.length) { list = FALLBACK_ROLES.map(function (r) { return { role: r }; }); }
-    var seen = {};
+    var seen = dict();
     list.forEach(function (r) { seen[r.role] = true; });
     runs().forEach(function (r) {
       if (!seen[r.role]) { seen[r.role] = true; list.push({ role: r.role }); }
@@ -489,8 +498,17 @@
 
   function pendingFor(slug, kinds) {
     return commandsSorted().filter(function (c) {
-      return !isFinal(c) && (slug === null || c.slug === slug) && (!kinds || kinds[c.kind]);
+      return !isFinal(c) && (slug === null || c.slug === slug) &&
+        (!kinds || Object.prototype.hasOwnProperty.call(kinds, c.kind));
     });
+  }
+
+  function cmdLabel(kind) { return CMD_LABEL[kind] || str(kind); }
+
+  // Status chip: the class comes from a fixed set, never from the raw server string.
+  function statusChip(status, text) {
+    var s = str(status);
+    return h("span", { class: "chip" + (CMD_STATUSES[s] ? " chip-status-" + s : ""), text: text === undefined ? s : text });
   }
 
   function shortModel(m) {
@@ -503,20 +521,20 @@
 
   var ui = {
     conn: "connecting", pollOk: null, authLost: false,
-    drafts: {}, modes: {}, errors: {}, busy: {}, open: {}, sigs: {},
+    drafts: {}, modes: {}, errors: {}, busy: {}, open: {}, sigs: {}, cids: {},
     drawer: null, drawerHistory: [], returnFk: null, logStick: true, lastRun: null,
-    feedFilter: "all", feedSeen: null, cardStage: null, archiveQuery: "", celebrated: {}
+    feedFilter: "all", feedSeen: null, cardStage: null, archiveQuery: "", archiveSlugs: null, celebrated: {}
   };
 
   // Replace a container's content only when its data signature changed, keeping
   // keyboard focus, caret and inner scroll positions across the swap.
   function patch(container, key, sig, build) {
     if (!container || ui.sigs[key] === sig) { return false; }
-    ui.sigs[key] = sig;
     var ae = document.activeElement;
+    var hadFocus = !!(ae && ae !== document.body && container.contains(ae));
     var fk = null;
     var sel = null;
-    if (ae && ae !== document.body && container.contains(ae)) {
+    if (hadFocus) {
       fk = ae.getAttribute("data-fk");
       if (fk && typeof ae.selectionStart === "number") {
         try { sel = [ae.selectionStart, ae.selectionEnd]; } catch (e) { sel = null; }
@@ -525,17 +543,25 @@
     var scrolls = Array.prototype.map.call(container.querySelectorAll("[data-keep-scroll]"), function (el) {
       return [el.getAttribute("data-keep-scroll"), el.scrollTop];
     });
+    // Build first: if it throws, the old content and signature stay, and the
+    // next render retries instead of skipping a half-applied update.
     var frag = build();
     container.replaceChildren(frag);
+    ui.sigs[key] = sig;
     scrolls.forEach(function (s) {
       var el = container.querySelector('[data-keep-scroll="' + cssEsc(s[0]) + '"]');
       if (el) { el.scrollTop = s[1]; }
     });
-    if (fk) {
-      var target = container.querySelector('[data-fk="' + cssEsc(fk) + '"]');
+    if (hadFocus) {
+      var target = fk ? container.querySelector('[data-fk="' + cssEsc(fk) + '"]') : null;
       if (target && !target.disabled) {
         target.focus({ preventScroll: true });
         if (sel && target.setSelectionRange) { try { target.setSelectionRange(sel[0], sel[1]); } catch (e) { /* not a text field */ } }
+      } else {
+        // The focused control is gone or now disabled (e.g. a command is in
+        // flight): keep keyboard focus in this region rather than on <body>.
+        if (!container.hasAttribute("tabindex")) { container.setAttribute("tabindex", "-1"); }
+        container.focus({ preventScroll: true });
       }
     }
     return true;
@@ -608,7 +634,7 @@
   }
 
   function cmdTitle(c) {
-    var label = CMD_LABEL[c.kind] || str(c.kind);
+    var label = cmdLabel(c.kind);
     if (c.kind === "tick" || c.kind === "suggest") { return label; }
     return label + " · " + titleOf(c.slug);
   }
@@ -630,6 +656,17 @@
     if (prev && isFinal(prev) && !isFinal(c)) { return; }
     S.commands.set(c.id, Object.assign({}, prev || {}, c));
     if (!quiet && prev && !isFinal(prev) && isFinal(c)) { onCommandFinished(c); }
+    if (S.commands.size > MAX_COMMANDS + 50) { pruneCommands(); }
+  }
+
+  // Keep memory flat on a page left open for days: drop the oldest finished
+  // commands beyond MAX_COMMANDS (the server only ever resends the last 50).
+  var MAX_COMMANDS = 200;
+  function pruneCommands() {
+    commandsSorted().filter(isFinal).slice(MAX_COMMANDS).forEach(function (c) {
+      S.commands.delete(c.id);
+      delete ui.celebrated[c.id];
+    });
   }
 
   // ------------------------------------------------------------------ applying server messages
@@ -665,6 +702,11 @@
 
   function handleMessage(m) {
     if (!m || typeof m !== "object") { return; }
+    try { applyMessage(m); } catch (e) { reportError("message " + str(m.type), e); }
+    scheduleRender();
+  }
+
+  function applyMessage(m) {
     switch (m.type) {
       case "state": applyState(m); break;
       case "live": setLive(m.live); break;
@@ -675,9 +717,8 @@
       case "hq": setHq(m.hq); break;
       case "command": upsertCommand(m.command, false); break;
       case "bridge": if (m.bridge && typeof m.bridge === "object") { S.bridge = m.bridge; } break;
-      default: return;
+      default: break;
     }
-    scheduleRender();
   }
 
   // ------------------------------------------------------------------ transport
@@ -686,6 +727,12 @@
   var backoff = 1000;
   var reconnectTimer = null;
   var pollTimer = null;
+  var lastMsgAt = 0;
+  var hiddenAt = 0;
+  var WS_SESSION_ENDED = 4001; // server: the session was revoked or expired
+  // While the laptop is online it pushes an HQ heartbeat at least every 60 s.
+  // A socket that stays silent much longer than that is dead (sleep, NAT drop).
+  var WS_SILENT_MS = 150000;
 
   function wsUrl() {
     return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/hq/ws";
@@ -698,22 +745,47 @@
     var sock;
     try { sock = new WebSocket(wsUrl()); } catch (e) { onSocketDown(); return; }
     ws = sock;
-    sock.onopen = function () {
-      backoff = 1000;
-      ui.conn = "live";
-      stopPolling();
-      scheduleRender();
-    };
+    var gotState = false;
+    sock.onopen = function () { lastMsgAt = Date.now(); };
     sock.onmessage = function (ev) {
+      if (ws !== sock) { return; }
+      lastMsgAt = Date.now();
       var m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!gotState && m && m.type === "state") {
+        // Only a delivered state proves the link works. Resetting the backoff
+        // on "open" would hammer a server that accepts and then closes.
+        gotState = true;
+        backoff = 1000;
+        ui.conn = "live";
+        stopPolling();
+      }
       handleMessage(m);
     };
-    sock.onclose = function () {
-      if (ws === sock) { ws = null; }
+    sock.onclose = function (ev) {
+      if (ws !== sock) { return; }
+      ws = null;
+      if (ev && ev.code === WS_SESSION_ENDED) { authLost(); return; }
       onSocketDown();
     };
     sock.onerror = function () { /* onclose follows */ };
+  }
+
+  // Abandon a socket that looks dead without waiting for the browser to notice.
+  function dropSocket() {
+    var sock = ws;
+    if (!sock) { return; }
+    ws = null;
+    sock.onopen = sock.onmessage = sock.onclose = sock.onerror = null;
+    try { sock.close(); } catch (e) { /* already closing */ }
+    backoff = 1000;
+    onSocketDown();
+  }
+
+  function watchSocket() {
+    if (ws && ws.readyState === 1 && S.bridge && S.bridge.online && Date.now() - lastMsgAt > WS_SILENT_MS) {
+      dropSocket();
+    }
   }
 
   function onSocketDown() {
@@ -742,6 +814,7 @@
   }
 
   function pollOnce() {
+    if (ui.authLost) { return Promise.resolve(); }
     return fetch("/hq/api/state", { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } })
       .then(function (res) {
         if (res.status === 401) { authLost(); throw new Error("unauthorized"); }
@@ -761,45 +834,77 @@
       });
   }
 
+  function hasDrafts() {
+    return Object.keys(ui.drafts).some(function (k) { return str(ui.drafts[k]).trim() !== ""; });
+  }
+
+  // The session is gone. Reload into the login screen, unless that would throw
+  // away text the founder is typing, or we reloaded moments ago (loop guard).
   function authLost() {
+    if (ui.authLost) { return; }
     var key = "hq-auth-reload";
     var last = 0;
     try { last = Number(sessionStorage.getItem(key)) || 0; } catch (e) { last = 0; }
-    if (Date.now() - last > 20000) {
+    if (Date.now() - last > 20000 && !hasDrafts()) {
       try { sessionStorage.setItem(key, String(Date.now())); } catch (e) { /* private mode */ }
       location.reload();
       return;
     }
     ui.authLost = true;
     stopPolling();
-    if (ws) { try { ws.close(); } catch (e) { /* ignore */ } }
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    var sock = ws;
+    ws = null;
+    if (sock) {
+      sock.onclose = sock.onmessage = sock.onerror = null;
+      try { sock.close(); } catch (e) { /* ignore */ }
+    }
     scheduleRender();
   }
 
   function sendCommand(formKey, payload, onOk) {
-    if (ui.busy[formKey]) { return; }
+    if (ui.busy[formKey] || ui.authLost) { return; }
     ui.busy[formKey] = true;
     delete ui.errors[formKey];
     renderAll();
     var body = {
-      kind: payload.kind, slug: payload.slug || "", gate: payload.gate || "",
-      text: payload.text || "", client_id: rid()
+      kind: payload.kind, slug: payload.slug || "", gate: payload.gate || "", text: payload.text || ""
     };
+    // Retrying the same command after a lost response reuses its client_id, so
+    // the server returns the command it may already have queued instead of
+    // queueing a duplicate. A new or edited command gets a fresh id.
+    var fp = JSON.stringify([body.kind, body.slug, body.gate, body.text]);
+    var prev = ui.cids[formKey];
+    body.client_id = prev && prev.fp === fp ? prev.id : rid();
+    ui.cids[formKey] = { fp: fp, id: body.client_id };
     fetch("/hq/api/commands", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body)
     }).then(function (res) {
-      if (res.status === 401) { authLost(); return null; }
+      if (res.status === 401) {
+        delete ui.cids[formKey];
+        ui.errors[formKey] = "Your session ended. Copy your text, then open a fresh link from /web.";
+        announce(ui.errors[formKey]);
+        authLost();
+        return null;
+      }
       return res.json().catch(function () { return null; }).then(function (data) {
         if (res.status === 202 && data && data.command) {
+          delete ui.cids[formKey];
           upsertCommand(data.command, true);
           if (onOk) { onOk(data.command); }
           if (!bridgeOnline()) {
             toast("info", cmdTitle(data.command) + " — queued", "The laptop is offline. This runs as soon as it reconnects.");
+          } else {
+            announce(cmdTitle(data.command) + " queued.");
           }
         } else {
+          // A 4xx is a definitive "no": the next attempt is a new command. A
+          // 5xx may have queued it, so a retry keeps the same client_id.
+          if (res.status < 500) { delete ui.cids[formKey]; }
           ui.errors[formKey] = (data && typeof data.error === "string" && data.error) ? data.error : "HQ answered " + res.status + ". Try again.";
           announce(ui.errors[formKey]);
         }
@@ -816,6 +921,7 @@
   // ------------------------------------------------------------------ render scheduling
 
   var renderQueued = false;
+  var renderDeferred = false; // an update arrived while the tab was hidden
   // rAF batches renders with paint; the timer covers views that are visible but
   // never painted (embedded previews), where rAF would hold every update back.
   function scheduleRender() {
@@ -830,16 +936,32 @@
     window.setTimeout(run, 250);
   }
 
+  // One failing renderer (odd data, a bug) must not take the others down, and
+  // the page keeps updating while it logs each distinct error once.
+  var reported = new Set();
+  function reportError(where, e) {
+    var msg = where + ": " + (e && e.message ? e.message : String(e));
+    if (reported.has(msg) || reported.size > 50) { return; }
+    reported.add(msg);
+    if (window.console && console.error) { console.error("HQ " + msg, e); }
+  }
+
+  function guarded(where, fn) {
+    try { fn(); } catch (e) { reportError(where, e); }
+  }
+
   function renderAll() {
-    renderTop();
-    renderBanners();
-    renderInbox();
-    renderCrew();
-    renderPipeline();
-    renderActivity();
-    renderIdeas();
-    renderArchive();
-    renderDrawer();
+    if (document.hidden) { renderDeferred = true; return; }
+    renderDeferred = false;
+    guarded("top", renderTop);
+    guarded("banners", renderBanners);
+    guarded("inbox", renderInbox);
+    guarded("crew", renderCrew);
+    guarded("pipeline", renderPipeline);
+    guarded("activity", renderActivity);
+    guarded("ideas", renderIdeas);
+    guarded("archive", renderArchive);
+    guarded("drawer", renderDrawer);
   }
 
   // ------------------------------------------------------------------ top bar
@@ -907,31 +1029,40 @@
   // ------------------------------------------------------------------ banners
 
   function renderBanners() {
+    // [id, tone, icon, headline, detail, spoken]: "spoken" is announced once
+    // when the banner first appears; the visible text may tick (ages) without
+    // re-announcing every minute.
     var list = [];
     if (ui.authLost) {
-      list.push(["bad", "alert", "Your session ended.", " Reload the page, or send /web to the Telegram bot for a new link."]);
+      list.push(["auth", "bad", "alert", "Your session ended.", " Reload the page, or send /web to the Telegram bot for a new link.", "Your session ended."]);
     }
-    if (S.loaded && ui.conn === "offline") {
-      list.push(["bad", "alert", "Can't reach HQ.", " Retrying in the background; what you see may be out of date."]);
+    if (S.loaded && ui.conn === "offline" && !ui.authLost) {
+      list.push(["conn", "bad", "alert", "Can't reach HQ.", " Retrying in the background; what you see may be out of date.", "Can't reach HQ. Retrying."]);
     }
     if (S.loaded && S.bridge && S.bridge.online === false) {
-      list.push(["bad", "laptop", "The laptop is offline" + (S.bridge.last_seen ? " (last seen " + rel(S.bridge.last_seen) + ")" : "") + ".",
-        " You can still act: commands wait in the queue and run when it's back."]);
+      list.push(["bridge", "bad", "laptop", "The laptop is offline" + (S.bridge.last_seen ? " (last seen " + rel(S.bridge.last_seen) + ")" : "") + ".",
+        " You can still act: commands wait in the queue and run when it's back.", "The laptop is offline."]);
     }
     if (S.loaded && !S.hq) {
-      list.push(["info", "laptop", "Waiting for the laptop's first HQ update.", " Gates, crew details and activity appear once it arrives. Public data is shown meanwhile."]);
+      list.push(["nohq", "info", "laptop", "Waiting for the laptop's first HQ update.", " Gates, crew details and activity appear once it arrives. Public data is shown meanwhile.", ""]);
     } else if (S.loaded && hqAge() > HQ_STALE_S) {
-      list.push(["warn", "alert", "HQ data is " + ago(hqAge()).replace(" ago", "") + " old.", " The laptop may be asleep; stages and gates may have moved since."]);
+      list.push(["stale", "warn", "alert", "HQ data is " + ago(hqAge()).replace(" ago", "") + " old.", " The laptop may be asleep; stages and gates may have moved since.", "HQ data is out of date."]);
     }
     var t = tickInfo();
     if (S.loaded && t.running && S.live && liveAge() > 120) {
-      list.push(["warn", "pulse", "No live signal for " + ago(liveAge()).replace(" ago", "") + ".", " A tick is marked running but the live feed went quiet."]);
+      list.push(["quiet", "warn", "pulse", "No live signal for " + ago(liveAge()).replace(" ago", "") + ".", " A tick is marked running but the live feed went quiet.", "The live feed went quiet."]);
     }
+    var ids = {};
+    list.forEach(function (b) {
+      ids[b[0]] = true;
+      if (b[5] && ui.banners && !ui.banners[b[0]]) { announce(b[5]); }
+    });
+    ui.banners = S.loaded ? ids : null;
     var sig = JSON.stringify(list);
     patch($("banners"), "banners", sig, function () {
       var f = document.createDocumentFragment();
       list.forEach(function (b) {
-        f.appendChild(h("div", { class: "banner banner-" + b[0] }, icon(b[1]), h("p", null, h("strong", { text: b[2] }), b[3])));
+        f.appendChild(h("div", { class: "banner banner-" + b[1] }, icon(b[2]), h("p", null, h("strong", { text: b[3] }), b[4])));
       });
       return f;
     });
@@ -1071,26 +1202,34 @@
     if (!mode && ui.errors[scope]) { put(zone, h("p", { class: "form-error", text: ui.errors[scope] })); }
     if (inflight.length) {
       var c = inflight[0];
-      put(zone, h("p", { class: "cmd-status", role: "status" }, h("span", { class: "spinner", "aria-hidden": "true" }),
-        h("strong", { text: CMD_LABEL[c.kind] || c.kind }),
+      put(zone, h("p", { class: "cmd-status" }, h("span", { class: "spinner", "aria-hidden": "true" }),
+        h("strong", { text: cmdLabel(c.kind) }),
         c.status === "queued" ? " queued — waiting for the laptop" : " delivered — the laptop is on it"));
       if (!mode) { var hint = offlineHint(); if (hint) { put(zone, hint); } }
     } else {
-      var d = doc();
-      var docAt = tms(d && d.generated_at) || 0;
-      var last = commandsSorted().filter(function (x) { return x.slug === v.slug && ACTION_KINDS[x.kind] && isFinal(x); })[0];
-      if (last && (tms(last.finished_at) || 0) >= docAt - 5000) {
+      var last = lastResult(v.slug);
+      if (last) {
         put(zone, h("p", { class: "cmd-status" },
-          h("span", { class: "chip chip-status-" + last.status, text: (CMD_LABEL[last.kind] || last.kind) + " · " + last.status }),
+          statusChip(last.status, cmdLabel(last.kind) + " · " + str(last.status)),
           str(last.message)));
       }
     }
     return zone;
   }
 
+  // The laptop's answer to the latest finished action on this venture, shown
+  // until an HQ update generated after it arrives (which reflects the result).
+  function lastResult(slug) {
+    var d = doc();
+    var docAt = tms(d && d.generated_at) || 0;
+    var last = commandsSorted().filter(function (x) { return x.slug === slug && ACTION_KINDS[x.kind] && isFinal(x); })[0];
+    return last && (tms(last.finished_at) || 0) >= docAt - 5000 ? last : null;
+  }
+
   function actionsSig(slug, ctx) {
     var scope = ctx + ":" + slug;
-    return [ui.modes[scope] || "", ui.errors[scope] || "", !!ui.busy[scope],
+    var last = lastResult(slug);
+    return [ui.modes[scope] || "", ui.errors[scope] || "", !!ui.busy[scope], last ? last.id : "",
       commandsSorted().filter(function (c) { return c.slug === slug; }).map(function (c) { return c.id + c.status; }).join(",")];
   }
 
@@ -1111,10 +1250,12 @@
     return s ? s.label : str(id).replace(/_/g, " ").toLowerCase();
   }
 
+  var KIND_CHIP = dict({ founder: "chip-kind-founder", internal: "chip-kind-internal", product: "chip-kind-product" });
+
   function kindChip(kind) {
     if (!kind) { return null; }
     var k = str(kind);
-    var cls = { founder: "chip-kind-founder", internal: "chip-kind-internal", product: "chip-kind-product" }[k] || "";
+    var cls = KIND_CHIP[k] || "";
     return h("span", { class: "chip " + cls, text: k });
   }
 
@@ -1180,7 +1321,7 @@
     var sig = JSON.stringify([S.loaded, !!S.hq, bridgeOnline(), ui.authLost, items.map(function (v) {
       return [v.slug, v.title, v.stage, v.kind, v.gate, v.gate_decision, v.blocked, v.block_question, v.block_url, v.design_url,
         v.current_pr, v.focus && v.focus.name, v.focus && str(v.focus.text).length, actionsSig(v.slug, "inbox")];
-    }), doc() && doc().generated_at && Math.floor(tms(doc().generated_at) / 60000)]);
+    })]);
     patch($("inbox-body"), "inbox", sig, function () {
       if (!S.loaded) { return h("p", { class: "loading-line", text: "Loading the founder's inbox…" }); }
       if (!S.hq) {
@@ -1201,7 +1342,7 @@
     var roles = crewRoles();
     var rs = runs();
     var stale = liveStale();
-    var working = {};
+    var working = dict();
     rs.forEach(function (r) { working[r.role] = true; });
     var idle = roles.filter(function (r) { return !working[r.role]; });
     $("crew-meta").textContent = rs.length ? rs.length + " working · " + idle.length + " resting" : "Everyone's resting";
@@ -1282,27 +1423,53 @@
     return avatar(s.role, "sm");
   }
 
+  var LEFT_SHOWN = 6;
+
+  function lastEventAt(v) {
+    var e = arr(v.events)[0];
+    return tms(e && e.ts) || tms(v.created) || 0;
+  }
+
+  // Open the archive filtered to the given ventures and bring it into view.
+  function showInArchive(slugs) {
+    ui.archiveSlugs = slugs.slice();
+    ui.sigs.archive = null;
+    var det = $("archive-details");
+    det.open = true;
+    renderArchive();
+    det.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+    var clear = $("archive-clear");
+    if (clear) { clear.focus({ preventScroll: true }); }
+  }
+
   function renderPipeline() {
     var vs = activeVentures();
-    var byStage = {};
-    var off = [];
+    var byStage = dict();
+    var left = [];
+    var other = [];
     vs.forEach(function (v) {
-      if (STAGE_BY_ID[v.stage]) { (byStage[v.stage] = byStage[v.stage] || []).push(v); } else { off.push(v); }
+      if (STAGE_BY_ID[v.stage]) { (byStage[v.stage] = byStage[v.stage] || []).push(v); }
+      else if (TERMINAL_STAGES.indexOf(v.stage) >= 0) { left.push(v); }
+      else { other.push(v); }
     });
-    var onBoard = vs.length - off.length;
+    left.sort(function (a, b) { return lastEventAt(b) - lastEventAt(a); });
+    var onBoard = vs.length - left.length - other.length;
     $("pipeline-meta").textContent = onBoard ? onBoard + " in flight" + (doc() && doc().wip_limit_total ? " · WIP limit " + doc().wip_limit_total : "") : "";
     var sig = JSON.stringify([S.loaded, vs.map(function (v) {
-      return [v.slug, v.title, v.stage, v.kind, v.ticks, v.max_ticks, !!v.gate, !!v.blocked];
+      return [v.slug, v.title, v.stage, v.kind, v.ticks, v.max_ticks, !!v.gate, !!v.blocked, lastEventAt(v)];
     }), runs().map(function (r) { return r.slug + ":" + r.role; })]);
 
     var body = $("pipeline-body");
-    var before = {};
+    if (ui.sigs.pipeline === sig) { return; }
+    // Card positions before the swap drive the move animation. Measure only
+    // when something changed: this forces a layout on every card.
+    var before = dict();
     Array.prototype.forEach.call(body.querySelectorAll("[data-card]"), function (el) {
       before[el.getAttribute("data-card")] = el.getBoundingClientRect();
     });
     var changed = patch(body, "pipeline", sig, function () {
       if (!S.loaded) { return h("p", { class: "loading-line", text: "Loading the pipeline…" }); }
-      if (!vs.length) {
+      if (!onBoard && !left.length && !other.length) {
         return h("div", { class: "pipeline-empty" },
           h("div", { class: "floor-sleepers" }, ["inventor", "screener", "analyst"].map(function (r) { return avatar(r, "md"); })),
           h("h3", { text: "The floor is quiet" }),
@@ -1332,18 +1499,28 @@
       });
       var frag = document.createDocumentFragment();
       put(frag, board);
-      if (off.length) {
-        put(frag, h("div", { class: "offboard" }, h("span", { text: "Recently left the board:" }), off.map(function (v) {
-          return h("button", { type: "button", class: "btn btn-quiet btn-sm", "data-fk": "off:" + v.slug, on: { click: function () { openVenture(v.slug); } } },
-            v.title || v.slug, h("span", { class: "chip", text: stageLabel(v.stage) }));
-        })));
+      function offButton(v) {
+        return h("button", { type: "button", class: "btn btn-quiet btn-sm", "data-fk": "off:" + v.slug, on: { click: function () { openVenture(v.slug); } } },
+          v.title || v.slug, h("span", { class: "chip", text: stageLabel(v.stage) }));
+      }
+      if (left.length) {
+        var hidden = left.length - LEFT_SHOWN;
+        put(frag, h("div", { class: "offboard" }, h("span", { text: "Recently left the board:" }),
+          left.slice(0, hidden > 0 ? LEFT_SHOWN : left.length).map(offButton),
+          hidden > 0 ? h("button", { type: "button", class: "btn btn-ghost btn-sm offboard-more", "data-fk": "off:more",
+            "aria-label": "Show all " + left.length + " ventures that left the board in the archive",
+            on: { click: function () { showInArchive(left.map(function (v) { return v.slug; })); } } },
+          "+" + hidden + " more", icon("arrow")) : null));
+      }
+      if (other.length) {
+        put(frag, h("div", { class: "offboard" }, h("span", { text: "Off the board:" }), other.map(offButton)));
       }
       return frag;
     });
     if (!changed || !S.loaded) { return; }
     var first = ui.cardStage === null;
-    var prevStage = ui.cardStage || {};
-    ui.cardStage = {};
+    var prevStage = ui.cardStage || dict();
+    ui.cardStage = dict();
     vs.forEach(function (v) { ui.cardStage[v.slug] = v.stage; });
     if (first) { return; }
     var calm = reducedMotion();
@@ -1368,12 +1545,12 @@
 
   // ------------------------------------------------------------------ activity
 
-  var AGENT_EVENTS = { role_start: 1, role_done: 1, role_failed: 1, failover: 1, session_resume: 1 };
-  var EVENT_GLYPH = {
+  var AGENT_EVENTS = dict({ role_start: 1, role_done: 1, role_failed: 1, failover: 1, session_resume: 1 });
+  var EVENT_GLYPH = dict({
     role_start: "play", role_done: "check", role_failed: "x", failover: "swap", blocked: "pause", killed: "ban",
     gate: "flag", created: "sparkle", session_resume: "resume", stage_change: "arrow",
     cmd_queued: "send", cmd_done: "check", cmd_failed: "x"
-  };
+  });
 
   function roleOfDetail(detail) {
     var m = /^([a-z][a-z0-9_-]*)(?: via |:)/i.exec(str(detail));
@@ -1431,8 +1608,8 @@
       case "cmd_queued":
       case "cmd_done":
       case "cmd_failed":
-        parts = [h("strong", { text: "You" }), " · " + (CMD_LABEL[it.cmd.kind] || it.cmd.kind), venture ? " · " : null, venture,
-          " ", h("span", { class: "chip chip-status-" + it.cmd.status, text: it.cmd.status })];
+        parts = [h("strong", { text: "You" }), " · " + cmdLabel(it.cmd.kind), venture ? " · " : null, venture,
+          " ", statusChip(it.cmd.status)];
         break;
       default: parts = [who, who ? " · " : null, h("strong", { text: it.event.replace(/_/g, " ") }), venture ? " · " : null, venture];
     }
@@ -1503,7 +1680,12 @@
   function renderIdeas() {
     var d = doc();
     var sugg = arr(d && d.suggestions).filter(function (s) { return s && s.text; });
-    var pending = pendingFor(null, { suggest: 1 });
+    // A suggest command the laptop already filed (its result is not back yet)
+    // is listed once, as the suggestion it became.
+    var pending = pendingFor(null, { suggest: 1 }).filter(function (c) {
+      var at = tms(c.created_at) || 0;
+      return !sugg.some(function (s) { return str(s.text).trim() === str(c.text).trim() && (tms(s.ts) || 0) >= at - 5000; });
+    });
     var queued = sugg.filter(function (s) { return s.status === "queued"; })
       .sort(function (a, b) { return (tms(a.ts) || 0) - (tms(b.ts) || 0); });
     var sig = JSON.stringify([S.loaded, bridgeOnline(), ui.errors.suggest || "", !!ui.busy.suggest, ui.authLost,
@@ -1526,7 +1708,7 @@
       var list = h("ul", { class: "idea-list", "aria-label": "Suggested subjects" });
       pending.forEach(function (c) {
         list.appendChild(h("li", { class: "idea is-queued" }, h("span", { class: "idea-text", text: str(c.text) }),
-          h("span", { class: "chip chip-status-" + c.status, text: c.status === "queued" ? "sending to laptop" : "laptop is filing it" }),
+          statusChip(c.status, c.status === "queued" ? "sending to laptop" : "laptop is filing it"),
           h("span", { class: "idea-meta" }, timeEl(c.created_at))));
       });
       sugg.forEach(function (s) {
@@ -1575,20 +1757,30 @@
       var input = h("input", { class: "input", id: "archive-q", type: "search", "data-fk": "archive:q", placeholder: "Filter by title, reason, field…", autocomplete: "off" });
       input.value = ui.archiveQuery;
       input.addEventListener("input", function () { ui.archiveQuery = input.value; renderArchive(); });
+      var clear = h("button", { type: "button", class: "filter-chip archive-clear", id: "archive-clear", "aria-pressed": "true", hidden: true,
+        on: { click: function () { ui.archiveSlugs = null; renderArchive(); input.focus(); } } },
+        "Left the board in the last 72 h", icon("x"), h("span", { class: "sr-only", text: " — show the whole archive" }));
       body.replaceChildren(
-        h("div", { class: "archive-tools" }, h("label", { class: "sr-only", for: "archive-q", text: "Filter the archive" }), input,
+        h("div", { class: "archive-tools" }, h("label", { class: "sr-only", for: "archive-q", text: "Filter the archive" }), input, clear,
           h("span", { class: "form-hint", id: "archive-count", "aria-live": "polite" })),
         h("div", { id: "archive-list-host" }));
     }
     var q = ui.archiveQuery.trim().toLowerCase();
+    var only = ui.archiveSlugs;
+    $("archive-clear").hidden = !only;
     var shown = rows.filter(function (v) {
+      if (only && only.indexOf(v.slug) < 0) { return false; }
       if (!q) { return true; }
       return [v.title, v.slug, v.abandoned_reason, v.field, v.abandoned_at_stage, v.stage].some(function (x) { return str(x).toLowerCase().indexOf(q) >= 0; });
     });
-    $("archive-count").textContent = q ? shown.length + " of " + rows.length + " shown" : "";
-    var sig = JSON.stringify([q, shown.map(function (v) { return [v.slug, v.status, v.title, v.abandoned_reason, v.abandoned_at_stage, v.url]; })]);
+    if (only) {
+      // Most recent first, the same order as the pipeline's "recently left" row.
+      shown.sort(function (a, b) { return only.indexOf(a.slug) - only.indexOf(b.slug); });
+    }
+    $("archive-count").textContent = q || only ? shown.length + " of " + rows.length + " shown" : "";
+    var sig = JSON.stringify([q, only, shown.map(function (v) { return [v.slug, v.status, v.title, v.abandoned_reason, v.abandoned_at_stage, v.url]; })]);
     patch($("archive-list-host"), "archive", sig, function () {
-      if (!shown.length) { return h("p", { class: "empty-line", text: q ? "Nothing matches that filter." : "The archive is empty." }); }
+      if (!shown.length) { return h("p", { class: "empty-line", text: q || only ? "Nothing matches that filter." : "The archive is empty." }); }
       return h("ul", { class: "archive-list" }, shown.map(function (v) {
         var deployed = v.status === "deployed";
         return h("li", null, h("div", { class: "arow" + (deployed ? " is-deployed" : "") },
@@ -1623,20 +1815,30 @@
     showDrawer("#log=" + encodeURIComponent(runId));
   }
 
+  function plainUrl() { return location.pathname + location.search; }
+  function drawerEntry() { return !!(history.state && history.state.hqDrawer); }
+
+  // Opening the drawer adds one history entry, so the phone's Back button (or
+  // a swipe back) closes it instead of leaving HQ. Moving inside the open
+  // drawer replaces that entry.
   function showDrawer(hash) {
     var drawer = $("drawer");
+    var opening = drawer.hidden;
     drawer.hidden = false;
     $("scrim").hidden = false;
     document.body.classList.add("is-locked");
     ["main", "topbar", "banners"].forEach(function (id) { var el = $(id); if (el) { el.inert = true; } });
     ui.sigs.drawer = null;
-    try { history.replaceState(null, "", location.pathname + location.search + hash); } catch (e) { /* ignore */ }
+    try {
+      if (opening && !drawerEntry()) { history.pushState({ hqDrawer: true }, "", plainUrl() + hash); }
+      else { history.replaceState({ hqDrawer: true }, "", plainUrl() + hash); }
+    } catch (e) { /* ignore */ }
     renderDrawer();
     $("drawer-body").scrollTop = 0;
     $("drawer-title").focus({ preventScroll: true });
   }
 
-  function closeDrawer() {
+  function closeDrawer(fromHistory) {
     var drawer = $("drawer");
     if (drawer.hidden) { return; }
     drawer.hidden = true;
@@ -1646,7 +1848,12 @@
     ui.drawer = null;
     ui.drawerHistory = [];
     ui.sigs.drawer = null;
-    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* ignore */ }
+    try {
+      // Closed from the UI: pop the entry the drawer pushed (the popstate that
+      // follows finds the drawer closed and only tidies the URL).
+      if (fromHistory !== true && drawerEntry()) { history.back(); }
+      else { history.replaceState(null, "", plainUrl()); }
+    } catch (e) { /* ignore */ }
     var back = ui.returnFk ? document.querySelector('[data-fk="' + cssEsc(ui.returnFk) + '"]') : null;
     ui.returnFk = null;
     if (back && !back.disabled) { back.focus(); } else { $("main").focus({ preventScroll: true }); }
@@ -1655,7 +1862,7 @@
   function trapFocus(e) {
     var drawer = $("drawer");
     if (drawer.hidden || e.key !== "Tab") { return; }
-    var nodes = Array.prototype.filter.call(drawer.querySelectorAll('a[href], button:not([disabled]), textarea, input, summary, [tabindex]:not([tabindex="-1"])'),
+    var nodes = Array.prototype.filter.call(drawer.querySelectorAll('a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'),
       function (n) { return n.offsetParent !== null || n === document.activeElement; });
     if (!nodes.length) { return; }
     var first = nodes[0];
@@ -1669,9 +1876,10 @@
     var stopAt = terminal && pub && pub.abandoned_at_stage ? STAGE_BY_ID[pub.abandoned_at_stage] : null;
     var cur = STAGE_BY_ID[v.stage] || stopAt;
     var idx = cur ? cur.index : -1;
-    var wrap = h("div", { class: "stepper", role: "list", "aria-label": "Pipeline progress" });
+    var wrap = h("div", { class: "stepper", role: "group", "aria-label": "Pipeline progress" });
     PHASES.forEach(function (name, pi) {
-      var col = h("div", { class: "step-phase" }, h("span", { class: "step-phase-name", text: name }));
+      var nameId = "step-phase-" + pi;
+      var col = h("div", { class: "step-phase", role: "list", "aria-labelledby": nameId }, h("span", { class: "step-phase-name", id: nameId, text: name }));
       STAGES.filter(function (s) { return s.phase === pi; }).forEach(function (s) {
         var state = s.index < idx ? "done" : s.index === idx ? (stopAt ? "stop" : "now") : "next";
         var dot = h("span", { class: "step-dot" }, state === "done" ? icon("check") : state === "stop" ? icon("x") : null);
@@ -1717,6 +1925,38 @@
       buttons: [h("button", { type: "button", class: "btn btn-sm btn-primary", "data-fk": scope + ":submit", disabled: busy || ui.authLost, on: { click: submit } },
         icon("note"), busy ? "Sending…" : "Add note")]
     }), h("p", { class: "form-hint", text: "Tip: Ctrl/⌘ + Enter sends." }), offlineHint());
+  }
+
+  // One list of founder notes for a venture, each note once. The same text can
+  // arrive three ways: a note command still in the queue, the snapshot's
+  // queued_notes (not yet read by a worker) and the HQ doc's last notes.
+  function founderNotes(slug, v) {
+    var norm = function (t) { return str(t).trim(); };
+    var queued = dict();
+    arr(S.status && S.status.queued_notes && S.status.queued_notes[slug]).forEach(function (t) {
+      queued[norm(t)] = (queued[norm(t)] || 0) + 1;
+    });
+    var onDisk = dict(); // text -> newest note time
+    var fromDoc = arr(v.notes).filter(function (n) { return n && norm(n.text); }).map(function (n) {
+      var t = norm(n.text);
+      onDisk[t] = Math.max(onDisk[t] || 0, tms(n.ts) || 0);
+      var isQueued = queued[t] > 0;
+      if (isQueued) { queued[t] -= 1; }
+      return { text: str(n.text), ts: n.ts, queued: isQueued };
+    });
+    var out = [];
+    pendingFor(slug, { note: 1 }).forEach(function (c) {
+      var t = norm(c.text);
+      // The laptop already wrote it (a note no older than the command, or the
+      // same instruction still queued); its result is just not back yet.
+      if ((t in onDisk && onDisk[t] >= (tms(c.created_at) || 0) - 5000) || queued[t] > 0) { return; }
+      out.push({ text: str(c.text), ts: null, cmd: c });
+    });
+    // Queued notes older than the doc's last five still wait for a worker.
+    Object.keys(queued).forEach(function (t) {
+      for (var i = 0; i < queued[t]; i++) { out.push({ text: t, ts: null, queued: true }); }
+    });
+    return out.concat(fromDoc);
   }
 
   function ventureDrawer(slug) {
@@ -1767,19 +2007,20 @@
     put(frag, dsec("Artifacts", arr(v.artifacts).length ? [h("ul", { class: "list-plain" }, arr(v.artifacts).map(function (a) {
       return h("li", { class: "art-row" }, avatar(a.author || "unknown", "xs"), h("span", { class: "mono", text: str(a.name) }), verdictChip(a.verdict));
     }))] : null));
-    var queuedNotes = arr(S.status && S.status.queued_notes && S.status.queued_notes[slug]);
-    var pendingNotes = pendingFor(slug, { note: 1 });
-    var notes = [];
-    pendingNotes.forEach(function (c) { notes.push(h("li", { class: "note is-queued" }, str(c.text), h("span", { class: "note-meta", text: "in the command queue · " + c.status }))); });
-    queuedNotes.forEach(function (t) { notes.push(h("li", { class: "note is-queued" }, str(t), h("span", { class: "note-meta", text: "queued for the next worker" }))); });
-    arr(v.notes).forEach(function (n) { notes.push(h("li", { class: "note" }, str(n.text), h("span", { class: "note-meta" }, timeEl(n.ts, "")))); });
+    var notes = founderNotes(slug, v).map(function (n) {
+      return h("li", { class: "note" + (n.queued || n.cmd ? " is-queued" : "") }, n.text,
+        h("span", { class: "note-meta" },
+          n.ts ? timeEl(n.ts, "") : null,
+          n.ts && (n.queued || n.cmd) ? " · " : null,
+          n.cmd ? "in the command queue · " + str(n.cmd.status) : n.queued ? "queued for the next worker" : null));
+    });
     put(frag, h("section", { class: "dsec" }, h("h3", { text: "Founder notes" }),
       notes.length ? h("ul", { class: "list-plain" }, notes) : null,
       hv ? noteForm(slug) : h("p", { class: "form-hint", text: "Notes can be added once the laptop reports this venture." })));
     var cmds = commandsSorted().filter(function (c) { return c.slug === slug; });
     put(frag, dsec("Your commands", cmds.length ? [h("ul", { class: "list-plain" }, cmds.slice(0, 12).map(function (c) {
-      return h("li", { class: "art-row" }, h("strong", { text: CMD_LABEL[c.kind] || c.kind }), c.gate ? h("span", { class: "chip", text: c.gate }) : null,
-        h("span", { class: "feed-detail", text: str(c.message || c.text) }), timeEl(c.finished_at || c.created_at), h("span", { class: "chip chip-status-" + c.status, text: c.status }));
+      return h("li", { class: "art-row cmd-row" }, h("strong", { text: cmdLabel(c.kind) }), c.gate ? h("span", { class: "chip", text: str(c.gate) }) : null,
+        h("span", { class: "feed-detail", text: str(c.message || c.text) }), timeEl(c.finished_at || c.created_at), statusChip(c.status));
     }))] : null));
     put(frag, dsec("Recent events", arr(v.events).length ? [h("ol", { class: "timeline" }, arr(v.events).map(function (e) {
       var role = roleOfDetail(e.detail);
@@ -1858,6 +2099,17 @@
   // ------------------------------------------------------------------ per-second clock
 
   function tickClock() {
+    watchSocket();
+    if (document.hidden) { return; }
+    guarded("clock", tickTimes);
+    if (S.loaded) {
+      guarded("top", renderTop);
+      guarded("banners", renderBanners);
+      if (liveStale() !== ui.lastStale) { ui.lastStale = liveStale(); guarded("crew", renderCrew); }
+    }
+  }
+
+  function tickTimes() {
     Array.prototype.forEach.call(document.querySelectorAll("[data-rel]"), function (el) {
       var t = rel(el.getAttribute("data-rel"));
       if (el.textContent !== t) { el.textContent = t; }
@@ -1866,11 +2118,6 @@
       var t = tms(el.getAttribute("data-since"));
       if (isFinite(t)) { el.textContent = dur((now() - t) / 1000); }
     });
-    if (S.loaded) {
-      renderTop();
-      renderBanners();
-      if (liveStale() !== ui.lastStale) { ui.lastStale = liveStale(); renderCrew(); }
-    }
   }
 
   // ------------------------------------------------------------------ boot: control room
@@ -1897,8 +2144,16 @@
         .catch(function () { return null; })
         .then(function () { location.href = "/hq"; });
     });
-    $("drawer-close").addEventListener("click", closeDrawer);
-    $("scrim").addEventListener("click", closeDrawer);
+    $("drawer-close").addEventListener("click", function () { closeDrawer(); });
+    $("scrim").addEventListener("click", function () { closeDrawer(); });
+    window.addEventListener("popstate", function () {
+      if (ui.drawer) { closeDrawer(true); return; }
+      // Our own history.back() after a close, or Forward onto an old drawer
+      // entry: show the plain page.
+      if (location.hash || drawerEntry()) {
+        try { history.replaceState(null, "", plainUrl()); } catch (e) { /* ignore */ }
+      }
+    });
     $("drawer-back").addEventListener("click", function () {
       var prev = ui.drawerHistory.pop();
       if (prev) { ui.drawer = prev; ui.sigs.drawer = null; showDrawer("#v=" + encodeURIComponent(prev.slug)); }
@@ -1910,14 +2165,34 @@
     $("archive-details").addEventListener("toggle", function () { renderArchive(); });
     window.addEventListener("online", function () { backoff = 1000; connect(); });
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible" && !ws) { backoff = 1000; window.clearTimeout(reconnectTimer); reconnectTimer = null; connect(); pollOnce(); }
+      if (document.visibilityState !== "visible") { hiddenAt = Date.now(); return; }
+      if (!ws) {
+        backoff = 1000;
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        connect();
+        pollOnce();
+      } else if (hiddenAt && Date.now() - hiddenAt > 30000) {
+        // Back from a sleeping phone or a background tab: the socket may be
+        // half-dead, so fetch a fresh state now rather than trusting it.
+        pollOnce();
+        watchSocket();
+      }
+      hiddenAt = 0;
+      if (renderDeferred) { scheduleRender(); }
     });
 
     var deepLink = /^#(v|log)=([^&]+)$/.exec(location.hash || "");
+    // A reload keeps the old history entry; start from the plain page so the
+    // deep-linked drawer pushes exactly one entry of its own.
+    if (location.hash || drawerEntry()) {
+      try { history.replaceState(null, "", plainUrl()); } catch (e) { /* ignore */ }
+    }
     renderAll();
     pollOnce().then(function () {
       if (deepLink && !ui.drawer) {
-        var val = decodeURIComponent(deepLink[2]);
+        var val = "";
+        try { val = decodeURIComponent(deepLink[2]); } catch (e) { return; }
         if (deepLink[1] === "v") { openVenture(val); } else if (runById(val)) { openLog(val); }
       }
     });

@@ -1642,6 +1642,13 @@ details[open] > summary .chev {
   text-align: left;
 }
 
+.offboard .offboard-more {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
 .pipeline-empty {
   display: grid;
   justify-items: center;
@@ -1958,6 +1965,12 @@ details[open] > summary .chev {
   max-width: 360px;
 }
 
+.archive-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .archive-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
@@ -2052,6 +2065,12 @@ details[open] > summary .chev {
 .drawer-back[hidden] {
   display: none;
 }
+
+/* Explicit columns: with the back button hidden, auto-placement would put the
+   heading in the "auto" column and push the close button off-screen. */
+.drawer-back { grid-column: 1; grid-row: 1; }
+.drawer-heading { grid-column: 2; grid-row: 1; }
+.drawer-close { grid-column: 3; grid-row: 1; }
 
 .drawer-heading {
   min-width: 0;
@@ -2238,6 +2257,17 @@ details[open] > summary .chev {
 
 .art-row .chip:last-child {
   margin-left: auto;
+}
+
+.art-row > .chip,
+.art-row > time,
+.art-row > strong {
+  flex: none;
+}
+
+.cmd-row .feed-detail {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .note {
