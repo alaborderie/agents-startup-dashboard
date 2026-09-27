@@ -123,7 +123,7 @@ The laptop pushes a single JSON document whenever it changes (the bridge
 rebuilds it every few seconds and pushes on hash change, plus a heartbeat
 push at least every 60 s). Body ≤ 2 MB. Server requires `generated_at`
 (not > 1 h in the future), skips a document older than the stored one
-(`{"status":"stale"}`), stores it verbatim as JSONB, and broadcasts it.
+(`{"status":"stale"}`), stores it verbatim (any valid JSON string, including `\u0000`), and broadcasts it.
 Response `{"status":"ok"}`.
 
 ```json

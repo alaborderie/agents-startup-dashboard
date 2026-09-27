@@ -129,3 +129,21 @@ func TestCommandLifecycle(t *testing.T) {
 		t.Fatalf("recent = %+v %v", recent, err)
 	}
 }
+
+// The laptop's document carries artifact text and log-derived events, so it can
+// hold any JSON string, including an escaped NUL or a lone surrogate. jsonb
+// rejects both, which would freeze the HQ on the last good document.
+func TestHQDocumentIsStoredVerbatimWhateverItsStrings(t *testing.T) {
+	resetDatabase(t)
+	ctx := context.Background()
+	s := New(testPool)
+	doc := json.RawMessage(`{"generated_at":"2026-09-27T12:00:00Z","focus":"a\u0000b \udcff"}`)
+	applied, err := s.ApplyHQ(ctx, time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), doc)
+	if err != nil || !applied {
+		t.Fatalf("apply = %v, %v", applied, err)
+	}
+	state, err := s.HQ(ctx)
+	if err != nil || string(state.Doc) != string(doc) {
+		t.Fatalf("stored doc = %s, %v", state.Doc, err)
+	}
+}

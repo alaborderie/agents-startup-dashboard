@@ -2,10 +2,12 @@
 --
 -- hq_state mirrors one JSON document the laptop pushes (gates, blocked
 -- questions, artifacts, activity). Like live_state it is a projection: the
--- laptop owns interpretation and the next push repairs any loss.
+-- laptop owns interpretation and the next push repairs any loss. The column is
+-- json, not jsonb: the document is served back verbatim and never queried, and
+-- jsonb rejects valid JSON such as an escaped NUL in an artifact or log line.
 CREATE TABLE IF NOT EXISTS hq_state (
     id           boolean PRIMARY KEY DEFAULT true CHECK (id),
-    doc          jsonb NOT NULL,
+    doc          json NOT NULL,
     generated_at timestamptz NOT NULL,
     received_at  timestamptz NOT NULL DEFAULT now()
 );
