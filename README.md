@@ -247,7 +247,7 @@ repo, in any manifest, or in any commit.**
 | Variable | Required | Notes |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string. From a Kubernetes Secret in production. |
-| `DASHBOARD_INGEST_TOKEN` | yes | Shared bearer token for `POST /ingest` and `POST /ingest/live`. Compared in constant time. From a Kubernetes Secret in production. |
+| `DASHBOARD_INGEST_TOKEN` | yes | Shared bearer token for every `/ingest*` route. Compared in constant time. From a Kubernetes Secret in production. It also mints HQ login links, so whoever holds it can act as the founder in the HQ: rotate it if it leaks. |
 | `PORT` | no | Defaults to `8080`. |
 | `PUBLIC_URL` | no | Canonical public URL, used for links in the page. |
 
