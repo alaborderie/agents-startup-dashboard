@@ -32,6 +32,9 @@ type hub struct {
 	mu          sync.Mutex
 	subscribers map[*subscriber]struct{}
 	commandWake chan struct{}
+	// closing is closed once the server shuts down; parked long polls and
+	// sockets end instead of holding the shutdown up.
+	closing     chan struct{}
 	activePolls int
 	lastPoll    time.Time
 	online      bool
@@ -42,6 +45,7 @@ func newHub(now func() time.Time) *hub {
 	return &hub{
 		subscribers: make(map[*subscriber]struct{}),
 		commandWake: make(chan struct{}),
+		closing:     make(chan struct{}),
 		now:         now,
 	}
 }
@@ -52,8 +56,13 @@ func (h *hub) subscribe() *subscriber {
 		dropped:  make(chan struct{}),
 	}
 	h.mu.Lock()
-	h.subscribers[s] = struct{}{}
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	select {
+	case <-h.closing:
+		close(s.dropped) // shutting down: end the socket straight away
+	default:
+		h.subscribers[s] = struct{}{}
+	}
 	return s
 }
 
@@ -89,12 +98,24 @@ func (h *hub) broadcast(message []byte) {
 	}
 }
 
+// closeAll ends every subscriber and wakes every parked long poll for
+// shutdown. It is idempotent.
 func (h *hub) closeAll() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	select {
+	case <-h.closing:
+	default:
+		close(h.closing)
+	}
 	for s := range h.subscribers {
 		h.removeLocked(s)
 	}
+}
+
+// shuttingDown is closed once closeAll has run.
+func (h *hub) shuttingDown() <-chan struct{} {
+	return h.closing
 }
 
 // commandSignal returns a channel closed on the next queued command. Take it

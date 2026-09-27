@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -664,5 +666,97 @@ func TestCommandResultDropsNULFromTheMessage(t *testing.T) {
 	}
 	if result.Command.Status != "failed" || result.Command.Message != "tick failed: garbage" {
 		t.Fatalf("result = %+v", result.Command)
+	}
+}
+
+// waitForClaims blocks until the bridge's long poll has queried the queue n
+// times, so a test knows the poll is parked rather than about to start.
+func waitForClaims(t *testing.T, stub *stubStore, n int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		stub.mu.Lock()
+		claims := stub.claims
+		stub.mu.Unlock()
+		if claims >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("long poll queried the queue %d times, want %d", claims, n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Shutdown waits for in-flight requests, and a parked long poll is one: Close,
+// registered as main registers it, must release the poll within the budget.
+func TestShutdownReleasesTheBridgeLongPoll(t *testing.T) {
+	app, stub := newHQApp(t)
+	server := httptest.NewUnstartedServer(app.Handler())
+	server.Config.RegisterOnShutdown(app.Close)
+	server.Start()
+	defer server.Close()
+
+	polled := make(chan string, 1)
+	go func() {
+		request, _ := http.NewRequest(http.MethodGet, server.URL+"/ingest/commands?wait=30", nil)
+		request.Header.Set("Authorization", "Bearer "+testToken)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			polled <- err.Error()
+			return
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(response.Body)
+		polled <- strconv.Itoa(response.StatusCode) + " " + strings.TrimSpace(string(body))
+	}()
+	waitForClaims(t, stub, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := server.Config.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown waited out the long poll: %v", err)
+	}
+	if got := <-polled; got != `200 {"commands":[]}` {
+		t.Fatalf("released poll = %s", got)
+	}
+}
+
+func TestCloseEndsSocketsIncludingOnesThatConnectAfterwards(t *testing.T) {
+	app, _ := newHQApp(t)
+	server := httptest.NewServer(app.Handler())
+	defer server.Close()
+	cookie := login(t, app)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	dial := func() *websocket.Conn {
+		t.Helper()
+		headers := http.Header{"Cookie": {cookie.Name + "=" + cookie.Value}, "Origin": {server.URL}}
+		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/hq/ws", &websocket.DialOptions{HTTPHeader: headers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn
+	}
+	readUntilClosed := func(conn *websocket.Conn) websocket.StatusCode {
+		t.Helper()
+		defer conn.CloseNow()
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				return websocket.CloseStatus(err)
+			}
+		}
+	}
+
+	before := dial()
+	if _, _, err := before.Read(ctx); err != nil { // the initial state
+		t.Fatal(err)
+	}
+	app.Close()
+	if code := readUntilClosed(before); code != websocket.StatusGoingAway {
+		t.Fatalf("open socket closed with %v, want going away", code)
+	}
+	if code := readUntilClosed(dial()); code != websocket.StatusGoingAway {
+		t.Fatalf("late socket closed with %v, want going away", code)
 	}
 }

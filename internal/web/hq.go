@@ -545,7 +545,12 @@ func (a *App) hqWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-subscription.dropped:
-			conn.Close(websocket.StatusTryAgainLater, "reconnect for a fresh state")
+			select {
+			case <-a.hub.shuttingDown():
+				conn.Close(websocket.StatusGoingAway, "server restarting")
+			default:
+				conn.Close(websocket.StatusTryAgainLater, "reconnect for a fresh state")
+			}
 			return
 		case message := <-subscription.messages:
 			if message != nil && !a.writeMessage(ctx, conn, message) {
@@ -698,6 +703,10 @@ func (a *App) pollCommands(w http.ResponseWriter, r *http.Request) {
 		case <-deadline.C:
 			writeJSON(w, http.StatusOK, map[string][]store.Command{"commands": {}})
 			return
+		case <-a.hub.shuttingDown():
+			// Answer rather than hold Shutdown up; the bridge polls again.
+			writeJSON(w, http.StatusOK, map[string][]store.Command{"commands": {}})
+			return
 		case <-r.Context().Done():
 			return
 		}
@@ -758,7 +767,9 @@ func (a *App) Run(ctx context.Context) {
 	}
 }
 
-// Close disconnects every HQ browser so shutdown does not wait on them.
+// Close ends every HQ socket and answers every parked long poll. Register it
+// with http.Server.RegisterOnShutdown: Shutdown never sees hijacked sockets
+// and would otherwise wait out a bridge poll.
 func (a *App) Close() {
 	a.hub.closeAll()
 }

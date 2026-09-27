@@ -61,6 +61,9 @@ func run() error {
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	// Shutdown closes the listeners, then runs this: it ends the hijacked HQ
+	// WebSockets, which Shutdown cannot see, and answers parked bridge polls.
+	server.RegisterOnShutdown(app.Close)
 
 	appContext, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
@@ -84,8 +87,6 @@ func run() error {
 	case <-signalContext.Done():
 	}
 
-	// Hijacked WebSocket connections are invisible to Shutdown; close them first.
-	app.Close()
 	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdownContext); err != nil {
