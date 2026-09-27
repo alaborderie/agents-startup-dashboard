@@ -23,7 +23,10 @@ import (
 )
 
 const (
-	sessionCookie    = "hq_session"
+	// The __Host- prefix makes browsers refuse this cookie from any other
+	// host. Sibling subdomains run agent-built apps; without it one could plant
+	// a Domain-wide hq_session on a longer path and shadow the real session.
+	sessionCookie    = "__Host-hq_session"
 	sessionTTL       = 30 * 24 * time.Hour
 	loginLinkMaxTTL  = 15 * time.Minute
 	maxHQBody        = 2 << 20
@@ -222,7 +225,7 @@ func (a *App) hqLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: sessionID, Path: "/hq",
+		Name: sessionCookie, Value: sessionID, Path: "/",
 		MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, Secure: true,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -238,9 +241,10 @@ func (a *App) hqLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: "", Path: "/hq", MaxAge: -1,
+		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }
 

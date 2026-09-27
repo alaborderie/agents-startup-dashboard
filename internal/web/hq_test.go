@@ -277,7 +277,10 @@ func TestHQAssetsAreServedAtHashedPaths(t *testing.T) {
 func TestMagicLinkLoginIsSingleUse(t *testing.T) {
 	app, _ := newHQApp(t)
 	cookie := login(t, app)
-	if !cookie.HttpOnly || !cookie.Secure || cookie.Path != "/hq" || cookie.SameSite != http.SameSiteLaxMode {
+	// __Host- requires Secure, Path=/ and no Domain; a browser drops the
+	// cookie otherwise, which would make login silently fail.
+	if !strings.HasPrefix(cookie.Name, "__Host-") || !cookie.HttpOnly || !cookie.Secure ||
+		cookie.Path != "/" || cookie.Domain != "" || cookie.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("session cookie is not locked down: %+v", cookie)
 	}
 
@@ -311,8 +314,13 @@ func TestLoginRejectsUnknownAndExpiredLinks(t *testing.T) {
 func TestLogoutEndsTheSession(t *testing.T) {
 	app, _ := newHQApp(t)
 	cookie := login(t, app)
-	if response := serve(app, authed(http.MethodPost, "/hq/logout", "", cookie)); response.Code != http.StatusNoContent {
+	response := serve(app, authed(http.MethodPost, "/hq/logout", "", cookie))
+	if response.Code != http.StatusNoContent {
 		t.Fatalf("logout %d", response.Code)
+	}
+	cleared := response.Result().Cookies()
+	if len(cleared) != 1 || cleared[0].Name != sessionCookie || cleared[0].Path != "/" || cleared[0].MaxAge >= 0 {
+		t.Fatalf("logout did not clear the session cookie: %+v", cleared)
 	}
 	if response := serve(app, authed(http.MethodGet, "/hq/api/state", "", cookie)); response.Code != http.StatusUnauthorized {
 		t.Fatalf("state after logout %d", response.Code)

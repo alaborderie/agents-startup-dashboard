@@ -42,7 +42,9 @@ session cookie.
    then `POST /hq/login` with JSON `{"token": "<T>"}`.
 5. Server hashes `T`, atomically marks the unexpired, unused link as used, and
    creates a session: random 32-byte id `S`, stores `sha256(S)` with a 30-day
-   expiry, sets cookie `hq_session=<S>; Path=/hq; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`.
+   expiry, sets cookie `__Host-hq_session=<S>; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`.
+   The `__Host-` prefix (which requires `Path=/` and no `Domain`) stops sibling
+   `*.antoinelaborderie.com` apps from planting a cookie that shadows the session.
    Response `204`. Invalid/expired/used → `401 {"error":"link expired or already used"}`.
 6. `POST /hq/logout` deletes the session and clears the cookie → `204`.
 
