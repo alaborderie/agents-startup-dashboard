@@ -811,3 +811,28 @@ func TestWebSocketEndsWhenTheSessionEnds(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowsersSeeACommandQueuedBeforeDelivered(t *testing.T) {
+	app, stub := newHQApp(t)
+	cookie := login(t, app)
+	browser := app.hub.subscribe()
+	defer app.hub.unsubscribe(browser)
+	done := make(chan struct{})
+	go func() {
+		serve(app, ingestRequest(http.MethodGet, "/ingest/commands?wait=10", ""))
+		close(done)
+	}()
+	waitForClaims(t, stub, 1)
+	serve(app, authed(http.MethodPost, "/hq/api/commands", `{"kind":"tick"}`, cookie))
+	<-done
+	var statuses []string
+	for len(browser.messages) > 0 {
+		var message struct{ Command *store.Command }
+		if err := json.Unmarshal(<-browser.messages, &message); err == nil && message.Command != nil {
+			statuses = append(statuses, message.Command.Status)
+		}
+	}
+	if strings.Join(statuses, ",") != "queued,delivered" {
+		t.Fatalf("command deltas = %v, want queued then delivered", statuses)
+	}
+}

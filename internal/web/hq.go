@@ -399,8 +399,10 @@ func (a *App) hqCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if created {
-		a.hub.notifyCommand()
+		// Broadcast before waking the poll: the poll broadcasts "delivered",
+		// and every browser must see "queued" first.
 		a.broadcastCommand(stored)
+		a.hub.notifyCommand()
 	}
 	writeJSON(w, http.StatusAccepted, map[string]store.Command{"command": stored})
 }

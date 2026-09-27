@@ -237,6 +237,11 @@ Server sends WS pings every 25 s. On connect: one `state`. Then deltas:
 | `command`  | `{"type":"command","command": Command}`   | a command is created or changes status |
 | `bridge`   | `{"type":"bridge","bridge":{"online","last_seen"}}` | bridge goes online/offline (offline = no poll for 60 s) |
 
+`command` deltas for one id arrive in status order, with one exception: a
+redelivery can race a late result and send `delivered` after `done`. Because
+`done` and `failed` are final, a client keeps a finished command even if an
+older status for the same id arrives later.
+
 The client reconnects with backoff (1 s → 30 s) and, while disconnected, may
 poll `GET /hq/api/state` every 10 s.
 
