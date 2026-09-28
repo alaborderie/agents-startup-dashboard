@@ -66,7 +66,7 @@ The rules that make this work:
 - **The laptop owns all interpretation.** Stage→status mapping, prose
   extraction, and abandoned-reason resolution happen in `bin/sync.sh`. The server
   stores finished plain text verbatim and renders it escaped. **There is no
-  markdown parser in this service** — that is the security control for a public
+  markdown parser for this prose** — that is the security control for a public
   page carrying prose from internal artifacts.
 
 The server is a projection, not a system of record. If Postgres is lost, the next
@@ -89,7 +89,11 @@ The public page and HQ draw them with one shared component
 (`static/livelog.js`, `static/livelog.css`): a rectangle per step, its border
 colour by type, tool calls as one-line rows that open for the command, output or
 diff, and the agent's own messages as the standout cards. `log_tail` remains for
-plain-text logs.
+plain-text logs. On the public page those messages are the only text the service
+formats: `livelog.js` draws a small markdown subset (paragraphs, lists, headings,
+fenced and inline code, bold, `http(s)` links) by creating DOM nodes and setting
+`textContent`, never by writing HTML, and every link opens with
+`rel="noopener noreferrer nofollow ugc"`.
 
 **Treat every log tail as public.** `GET /live.json` is unauthenticated, so the
 redaction is the only thing standing between a worker's raw output and the open
