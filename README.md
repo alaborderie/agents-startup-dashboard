@@ -99,7 +99,8 @@ boundary), but it is a heuristic, not a guarantee: do not run a worker whose
 output is genuinely confidential. The endpoint is `noindex`, `no-store`, bounded
 (64 runs, 64 KB per tail, 250 steps per run with per-field caps), and the panel is
 scoped to a personal dashboard. The same redactor runs over every string of every
-step.
+step except its `id`, which is the engine's opaque handle (a tool-call or message
+id) and must reach the page intact because updates are keyed on it.
 
 Unlike snapshot ingest, the live feed is a **replace-the-whole-set** write: every
 push deletes the current `live_runs` and inserts exactly what it carries. A push
