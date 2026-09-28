@@ -100,7 +100,7 @@
     var s = Math.round(ms / 1000);
     if (s < 60) { return s + "s"; }
     var m = Math.floor(s / 60);
-    return m + "m " + (s % 60 ? (s % 60) + "s" : "");
+    return m + "m" + (s % 60 ? " " + (s % 60) + "s" : "");
   }
 
   function clock(ts) {
@@ -346,6 +346,14 @@
     return decorate(node, step);
   }
 
+  // A plain-text log (no event stream) is one long card at full height, so the
+  // feed's own scroll follows its newest line.
+  function tailStep(step) {
+    var node = rawStep(step);
+    node.classList.add("ll-tail");
+    return node;
+  }
+
   function build(step, who) {
     switch (step.kind) {
       case "message": return messageStep(step, who);
@@ -354,6 +362,7 @@
       case "error": return errorStep(step);
       case "result": return resultStep(step);
       case "notice": return noticeStep(step);
+      case "tail": return tailStep(step);
       default: return rawStep(step);
     }
   }
@@ -374,10 +383,14 @@
     this.scroller.setAttribute("aria-live", "off");
     this.scroller.setAttribute("aria-label", opts.label || "Agent steps");
     this.feed = el("div", "ll-feed");
+    // The empty line and the working dots sit after the feed and are only shown
+    // or hidden, so an update never restarts their animation.
     this.empty = el("p", "ll-empty", "Waiting for the first step…");
+    this.empty.hidden = true;
     this.working = el("div", "ll-working");
+    this.working.hidden = true;
     add(this.working, el("span", "ll-dots"), el("span", null, this.who + " is working"));
-    add(this.scroller, this.feed);
+    add(this.scroller, this.feed, this.empty, this.working);
     this.jump = el("button", "ll-jump", "Jump to latest");
     this.jump.type = "button";
     this.jump.hidden = true;
@@ -422,16 +435,18 @@
     state = state || {};
     var steps = run && Array.isArray(run.log_events) ? run.log_events : [];
     if (!steps.length && run && run.log_tail) {
-      steps = [{ id: "tail", kind: "raw", text: String(run.log_tail) }];
+      steps = [{ id: "tail", kind: "tail", text: String(run.log_tail) }];
     }
     var feed = this.feed;
     var previous = this.nodes;
     var next = {};
     var order = [];
     var changed = false;
+    var last = null;
     var self = this;
     steps.forEach(function (step) {
       if (!step || typeof step !== "object") { return; }
+      last = step;
       var id = str(step.id) || "step-" + order.length;
       while (next[id]) { id += "~"; }
       var sig = JSON.stringify(step);
@@ -439,12 +454,17 @@
       var entry = old;
       if (!old || old.sig !== sig) {
         var node = build(step, self.who);
+        var auto = node.tagName === "DETAILS" && node.open;
         if (old) {
-          // Keep the reader's choice: a step they opened stays open when it updates.
-          if (old.node.tagName === "DETAILS" && node.tagName === "DETAILS") { node.open = old.node.open; }
+          // Keep the reader's choice: a step they opened (or closed) stays that
+          // way when it updates. Untouched, it takes its new default, so a
+          // running step that fails opens on its error.
+          if (old.node.tagName === "DETAILS" && node.tagName === "DETAILS" && old.node.open !== old.auto) {
+            node.open = old.node.open;
+          }
           if (old.node.parentNode === feed) { feed.replaceChild(node, old.node); }
         }
-        entry = { sig: sig, node: node };
+        entry = { sig: sig, node: node, auto: auto };
         changed = true;
       }
       next[id] = entry;
@@ -460,8 +480,6 @@
 
     // What is left in the feed is already in step order (steps only ever append,
     // or fall off the front), so this pass only inserts the new ones.
-    if (this.empty.parentNode === feed) { feed.removeChild(this.empty); }
-    if (this.working.parentNode === feed) { feed.removeChild(this.working); }
     var cursor = feed.firstChild;
     order.forEach(function (node) {
       if (node === cursor) { cursor = cursor.nextSibling; return; }
@@ -472,11 +490,14 @@
       cursor = cursor.nextSibling;
       feed.removeChild(stray);
     }
-    if (!order.length) {
-      this.empty.textContent = state.ended ? "No output was recorded for this run." : "Waiting for the first step…";
-      feed.appendChild(this.empty);
+    this.empty.textContent = state.ended ? "No output was recorded for this run." : "Waiting for the first step…";
+    this.empty.hidden = order.length > 0;
+    // A final result means the agent is done, whatever the run list says.
+    var working = !!state.working && !(last && last.kind === "result");
+    if (this.working.hidden === working) {
+      this.working.hidden = !working;
+      if (!changed && this.stick) { this.toBottom(); }
     }
-    if (state.working) { feed.appendChild(this.working); }
     if (changed) {
       if (this.stick) {
         this.toBottom();

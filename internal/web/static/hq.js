@@ -2058,6 +2058,8 @@
       who: roleName(d.role), label: roleName(d.role) + " steps", stick: ui.logStick,
       onStick: function (atBottom) { ui.logStick = atBottom; }
     }) : null;
+    // The drawer is rebuilt when the run ends: keep the reader where they were.
+    if (ui.log) { ui.log.scroller.setAttribute("data-keep-scroll", "log:" + d.runId); }
     if (ui.log) { ui.log.update(run, { working: !!r && !liveStale(), ended: !r }); }
     else { put(host, h("pre", { class: "log-fallback", text: (run && run.log_tail) || "Waiting for output…" })); }
     put(frag, host);
@@ -2100,7 +2102,7 @@
     if (S.loaded) {
       guarded("top", renderTop);
       guarded("banners", renderBanners);
-      if (liveStale() !== ui.lastStale) { ui.lastStale = liveStale(); guarded("crew", renderCrew); }
+      if (liveStale() !== ui.lastStale) { ui.lastStale = liveStale(); guarded("crew", renderCrew); guarded("log", updateLogText); }
     }
   }
 

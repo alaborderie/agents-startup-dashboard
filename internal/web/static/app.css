@@ -1140,6 +1140,10 @@ a:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.log-body:not(.ll) {
+  padding: var(--s-4);
+}
+
 .log-body.ll {
   overflow: hidden;
   font-family: inherit;

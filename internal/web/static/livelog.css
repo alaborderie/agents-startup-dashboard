@@ -256,6 +256,11 @@ details[open] > summary .ll-chev {
   margin: 0 10px 10px;
 }
 
+/* A plain-text log is read in the feed's own scroll, newest line last. */
+.ll-tail .ll-out {
+  max-height: none;
+}
+
 .ll-think-text {
   margin: 0;
   color: var(--ll-ink-2);
@@ -369,6 +374,12 @@ details[open] > summary .ll-chev {
   color: var(--ll-ink);
 }
 
+.ll-link:focus-visible,
+.ll-jump:focus-visible {
+  outline: 2px solid var(--ll-ink);
+  outline-offset: 2px;
+}
+
 /* ---------- plan ---------- */
 
 .ll-todos {
@@ -446,7 +457,7 @@ details[open] > summary .ll-chev {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 16px;
   color: var(--ll-ink-3);
   font-size: .8rem;
   font-weight: 700;
@@ -479,6 +490,8 @@ details[open] > summary .ll-chev {
   cursor: pointer;
 }
 
+.ll-empty[hidden],
+.ll-working[hidden],
 .ll-jump[hidden] {
   display: none;
 }

@@ -14,6 +14,7 @@
   var fetchedAt = 0; // local ms when the last good feed arrived
   var ageAtFetch = 0; // server-reported age at that moment
   var selectedRunId = null;
+  var logStale = null; // the staleness the open log last drew
   var tickHandle = null;
   var snapshotStatus = null;
 
@@ -193,6 +194,10 @@
       var run = findRun(selectedRunId);
       if (run) {
         els.sub.textContent = runSubtitle(run);
+        // A feed that went stale between polls stops saying the agent works.
+        if (stale !== logStale) {
+          showSteps(run);
+        }
       }
     }
   }
@@ -404,7 +409,8 @@
   // only when the steps component did not load.
   function showSteps(run) {
     if (els.log) {
-      els.log.update(run, { working: !isStale() });
+      logStale = isStale();
+      els.log.update(run, { working: !logStale });
       return;
     }
     els.body.textContent = run.log_tail || "Waiting for output…";
