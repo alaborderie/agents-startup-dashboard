@@ -1059,7 +1059,7 @@ a:focus-visible {
   z-index: 40;
   display: flex;
   flex-direction: column;
-  max-height: min(62vh, 560px);
+  height: min(78vh, 760px);
   background: var(--surface);
   border-top: 2px solid var(--accent);
   box-shadow: 0 -14px 44px rgba(28, 30, 26, .2);
@@ -1079,6 +1079,7 @@ a:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--s-4);
+  margin: 0;
   padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--rule);
 }
@@ -1121,19 +1122,38 @@ a:focus-visible {
   background: var(--surface-sunk);
 }
 
+/* The steps component (livelog.css) scrolls itself; without it the body is a
+   plain text tail. */
 .log-body {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   margin: 0;
-  padding: var(--s-4);
   min-height: 180px;
   overflow: auto;
-  background: #1F221C;
+  background: #0D0F16;
   color: #E7E5DA;
   font-family: var(--font-mono);
   font-size: .8125rem;
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.log-body:not(.ll) {
+  padding: var(--s-4);
+}
+
+.log-body.ll {
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 1rem;
+  white-space: normal;
+}
+
+.log-waiting {
+  margin: auto;
+  color: #8C92AB;
 }
 
 @media (min-width: 720px) {

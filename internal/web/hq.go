@@ -71,9 +71,11 @@ var commandSpecs = map[string]commandSpec{
 var validGates = map[string]struct{}{"build": {}, "design": {}, "deploy": {}}
 
 type hqPageData struct {
-	Authenticated  bool
-	StylesheetPath string
-	ScriptPath     string
+	Authenticated         bool
+	StylesheetPath        string
+	ScriptPath            string
+	LiveLogStylesheetPath string
+	LiveLogScriptPath     string
 }
 
 func hashHex(value string) string {
@@ -182,9 +184,11 @@ func (a *App) renderHQ(w http.ResponseWriter, r *http.Request, name string, auth
 	a.hqHeaders(w, r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = a.template.ExecuteTemplate(w, name, hqPageData{
-		Authenticated:  authenticated,
-		StylesheetPath: a.assetPath("hq.css"),
-		ScriptPath:     a.assetPath("hq.js"),
+		Authenticated:         authenticated,
+		StylesheetPath:        a.assetPath("hq.css"),
+		ScriptPath:            a.assetPath("hq.js"),
+		LiveLogStylesheetPath: a.assetPath("livelog.css"),
+		LiveLogScriptPath:     a.assetPath("livelog.js"),
 	})
 }
 

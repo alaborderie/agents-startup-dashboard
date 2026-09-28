@@ -1,0 +1,536 @@
+/* Live log — typed agent steps (see livelog.js). Shared by the public page and HQ.
+ *
+ * One rectangle per step, its border colour saying what the step is. The agent's
+ * own messages are the loudest thing on screen; tool calls are quiet one-line rows
+ * that open for detail. Dark on both pages, whatever the page theme. */
+
+.ll {
+  --ll-bg: #0D0F16;
+  --ll-card: #141722;
+  --ll-ink: #EEF0F7;
+  --ll-ink-2: #C4C8D8;
+  --ll-ink-3: #8C92AB;
+  --ll-line: #262A3A;
+  --ll-mono: var(--font-mono, ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace);
+  --ll-sans: var(--font-body, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif);
+
+  --ll-message: var(--role, #FFE066);
+  --ll-thinking: #B197FC;
+  --ll-shell: #FFC15E;
+  --ll-read: #74C0FC;
+  --ll-edit: #7BE495;
+  --ll-web: #F783AC;
+  --ll-task: #FFA94D;
+  --ll-todo: #3BC9DB;
+  --ll-skill: #E599F7;
+  --ll-other: #ADB5BD;
+  --ll-error: #FF6B6B;
+  --ll-ok: #7BE495;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--ll-ink);
+  font-family: var(--ll-sans);
+  background: var(--ll-bg);
+  color-scheme: dark;
+}
+
+.ll-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 16px clamp(10px, 2.4vw, 28px) 28px;
+  scroll-padding-bottom: 28px;
+}
+
+.ll-scroll:focus-visible {
+  outline: 2px solid var(--focus, #FFE066);
+  outline-offset: -2px;
+}
+
+.ll-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+}
+
+/* ---------- a step ---------- */
+
+.ll-step {
+  --ll-c: var(--ll-other);
+  min-width: 0;
+  border: 1.5px solid color-mix(in srgb, var(--ll-c) 62%, transparent);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ll-c) 7%, var(--ll-card));
+  font-size: .84rem;
+  line-height: 1.45;
+}
+
+.ll-step[data-tool="shell"] { --ll-c: var(--ll-shell); }
+.ll-step[data-tool="read"] { --ll-c: var(--ll-read); }
+.ll-step[data-tool="edit"] { --ll-c: var(--ll-edit); }
+.ll-step[data-tool="web"] { --ll-c: var(--ll-web); }
+.ll-step[data-tool="task"] { --ll-c: var(--ll-task); }
+.ll-step[data-tool="todo"] { --ll-c: var(--ll-todo); }
+.ll-step[data-tool="skill"] { --ll-c: var(--ll-skill); }
+.ll-think { --ll-c: var(--ll-thinking); border-style: dashed; }
+.ll-err,
+.ll-step[data-status="error"] { --ll-c: var(--ll-error); }
+.ll-result { --ll-c: var(--ll-ok); }
+.ll-result[data-status="error"] { --ll-c: var(--ll-error); }
+.ll-raw { --ll-c: #5C6380; }
+
+.ll-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  color: var(--ll-ink-2);
+}
+
+summary.ll-row {
+  cursor: pointer;
+  list-style: none;
+  border-radius: 8px;
+}
+
+summary.ll-row::-webkit-details-marker {
+  display: none;
+}
+
+summary.ll-row:hover {
+  background: color-mix(in srgb, var(--ll-c) 10%, transparent);
+}
+
+summary.ll-row:focus-visible {
+  outline: 2px solid var(--ll-c);
+  outline-offset: 1px;
+}
+
+.ll-ico {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--ll-c);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ll-verb {
+  flex: none;
+  color: var(--ll-ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ll-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ll-ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+code.ll-title {
+  font-family: var(--ll-mono);
+  font-size: .78rem;
+}
+
+.ll-title.is-muted,
+.ll-preview {
+  color: var(--ll-ink-3);
+  font-style: italic;
+}
+
+.ll-meta {
+  flex: none;
+  color: var(--ll-ink-3);
+  font-size: .74rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ll-changes {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  font-family: var(--ll-mono);
+  font-size: .74rem;
+  font-weight: 700;
+}
+
+.ll-add { color: #8CE99A; }
+.ll-del { color: #FFA8A8; }
+.ll-hunk { color: #74C0FC; }
+
+.ll-badge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.ll-badge.is-running {
+  background: color-mix(in srgb, var(--ll-c) 22%, transparent);
+  color: var(--ll-c);
+  animation: ll-pulse 1.4s ease-in-out infinite;
+}
+
+.ll-badge.is-error {
+  background: color-mix(in srgb, var(--ll-error) 22%, transparent);
+  color: var(--ll-error);
+}
+
+.ll-chev {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 2px 0 4px;
+  border-right: 2px solid var(--ll-ink-3);
+  border-bottom: 2px solid var(--ll-ink-3);
+  transform: rotate(-45deg);
+  transition: transform .16s ease;
+}
+
+details[open] > summary .ll-chev {
+  transform: rotate(45deg);
+}
+
+.ll-body {
+  display: grid;
+  gap: 8px;
+  padding: 2px 12px 12px 34px;
+}
+
+.ll-detail {
+  margin: 0;
+  color: var(--ll-ink-3);
+  font-size: .8rem;
+}
+
+.ll-pre {
+  max-height: 340px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--ll-line);
+  border-radius: 8px;
+  background: #090B10;
+  color: #D5DAE8;
+  font-family: var(--ll-mono);
+  font-size: .76rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.ll-cmd {
+  color: var(--ll-shell);
+}
+
+.ll-out.is-error,
+.ll-err .ll-out {
+  border-color: color-mix(in srgb, var(--ll-error) 45%, transparent);
+  color: #FFC9C9;
+}
+
+.ll-err .ll-out,
+.ll-result .ll-out,
+.ll-raw .ll-out {
+  margin: 0 10px 10px;
+}
+
+/* A plain-text log is read in the feed's own scroll, newest line last. */
+.ll-tail .ll-out {
+  max-height: none;
+}
+
+.ll-think-text {
+  margin: 0;
+  color: var(--ll-ink-2);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+/* A sub-agent's steps hang off a rail under the call that started them. */
+.ll-step.is-sub,
+.ll-notice.is-sub {
+  position: relative;
+  margin-left: 22px;
+}
+
+.ll-step.is-sub::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  bottom: -7px;
+  left: -14px;
+  border-left: 2px dotted var(--ll-task);
+  opacity: .7;
+}
+
+/* ---------- the agent speaking ---------- */
+
+.ll-msg {
+  --ll-c: var(--ll-message);
+  margin: 12px 0 8px;
+  padding: 14px 18px 16px;
+  border-width: 2px;
+  border-left-width: 2px;
+  border-color: var(--ll-c);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ll-c) 13%, transparent), transparent 70%),
+    #171A26;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ll-c) 9%, transparent), 4px 4px 0 #05060A;
+  color: var(--ll-ink);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.ll-msg:first-child {
+  margin-top: 0;
+}
+
+.ll-msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ll-msg-head .ll-ico {
+  width: 18px;
+  height: 18px;
+}
+
+.ll-msg-who {
+  flex: 1 1 auto;
+  color: var(--ll-c);
+  font-size: .74rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.ll-md > * {
+  margin: 0;
+}
+
+.ll-md > * + * {
+  margin-top: .6em;
+}
+
+.ll-md .ll-h {
+  font-weight: 800;
+}
+
+.ll-md .ll-list {
+  padding-left: 1.3em;
+}
+
+.ll-md .ll-list li + li {
+  margin-top: .2em;
+}
+
+.ll-md .ll-pre {
+  font-size: .8rem;
+}
+
+.ll-code {
+  padding: .05em .35em;
+  border: 1px solid var(--ll-line);
+  border-radius: 5px;
+  background: #0B0D13;
+  font-family: var(--ll-mono);
+  font-size: .86em;
+  overflow-wrap: anywhere;
+}
+
+.ll-link {
+  color: var(--ll-c);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+.ll-link:hover {
+  color: var(--ll-ink);
+}
+
+.ll-link:focus-visible,
+.ll-jump:focus-visible {
+  outline: 2px solid var(--ll-ink);
+  outline-offset: 2px;
+}
+
+/* ---------- plan ---------- */
+
+.ll-todos {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 12px 10px 34px;
+  list-style: none;
+}
+
+.ll-todo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ll-ink-2);
+}
+
+.ll-todo-box {
+  position: relative;
+  top: 2px;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--ll-todo);
+  border-radius: 4px;
+}
+
+.ll-todo.is-done .ll-todo-box {
+  background: var(--ll-todo);
+}
+
+.ll-todo.is-done .ll-todo-text {
+  color: var(--ll-ink-3);
+  text-decoration: line-through;
+}
+
+.ll-todo.is-doing .ll-todo-box {
+  background: linear-gradient(90deg, var(--ll-todo) 50%, transparent 50%);
+}
+
+.ll-todo.is-doing .ll-todo-text {
+  color: var(--ll-ink);
+  font-weight: 700;
+}
+
+/* ---------- notices, working, empty ---------- */
+
+.ll-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0;
+  color: var(--ll-ink-3);
+  font-size: .74rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-align: center;
+}
+
+.ll-notice::before,
+.ll-notice::after {
+  content: "";
+  flex: 1 1 auto;
+  border-top: 1px dashed var(--ll-line);
+}
+
+.ll-empty {
+  margin: 32px 0;
+  color: var(--ll-ink-3);
+  text-align: center;
+}
+
+.ll-working {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+  color: var(--ll-ink-3);
+  font-size: .8rem;
+  font-weight: 700;
+}
+
+.ll-dots {
+  width: 34px;
+  height: 8px;
+  background:
+    radial-gradient(circle closest-side, var(--ll-message) 90%, transparent) 0 50% / 8px 8px no-repeat,
+    radial-gradient(circle closest-side, var(--ll-message) 90%, transparent) 50% 50% / 8px 8px no-repeat,
+    radial-gradient(circle closest-side, var(--ll-message) 90%, transparent) 100% 50% / 8px 8px no-repeat;
+  animation: ll-pulse 1.2s ease-in-out infinite;
+}
+
+.ll-jump {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 2px solid #05060A;
+  border-radius: 999px;
+  background: var(--ll-message);
+  color: #14151D;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 800;
+  box-shadow: 3px 3px 0 #05060A;
+  cursor: pointer;
+}
+
+.ll-empty[hidden],
+.ll-working[hidden],
+.ll-jump[hidden] {
+  display: none;
+}
+
+@keyframes ll-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ll-badge.is-running,
+  .ll-dots {
+    animation: none;
+  }
+
+  .ll-chev {
+    transition: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .ll-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .ll-title {
+    flex-basis: 100%;
+    order: 5;
+    padding-left: 24px;
+  }
+
+  .ll-body,
+  .ll-todos {
+    padding-left: 12px;
+  }
+
+  .ll-msg {
+    padding: 12px 14px 14px;
+    font-size: .95rem;
+  }
+}

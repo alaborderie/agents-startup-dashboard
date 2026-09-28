@@ -168,7 +168,7 @@ func TestSchemaHasExactlyTheDesignedColumns(t *testing.T) {
 		},
 		"live_runs": {
 			"run_id", "slug", "role", "leg", "engine", "model", "status",
-			"started_at", "log_bytes", "log_tail", "received_at",
+			"started_at", "log_bytes", "log_tail", "received_at", "log_events",
 		},
 	}
 	for table, want := range expected {
@@ -649,7 +649,11 @@ func TestApplyLiveMirrorsRunningSet(t *testing.T) {
 		GeneratedAt: &gen, Cycle: 151, TickRunning: true,
 		Runs: []LiveRun{
 			{RunID: "a", Slug: "alpha", Role: "developer", Status: "running", StartedAt: &started, LogBytes: 10, LogTail: "alpha log"},
-			{RunID: "b", Slug: "beta", Role: "reviewer", Status: "running"},
+			{RunID: "b", Slug: "beta", Role: "reviewer", Status: "running", LogEvents: []LogStep{
+				{ID: "p1", Kind: "message", Text: "Reviewing the diff.", TS: 1790571833464},
+				{ID: "c1", Kind: "tool", Tool: "todo", Name: "todowrite", Status: "done", Title: "1/2 done",
+					Todos: []LogTodo{{Text: "read", Status: "completed"}, {Text: "judge", Status: "in_progress"}}},
+			}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -668,8 +672,14 @@ func TestApplyLiveMirrorsRunningSet(t *testing.T) {
 	if state.AgeSeconds < 0 {
 		t.Fatalf("age_seconds = %d", state.AgeSeconds)
 	}
-	if state.Runs[0].RunID != "a" || state.Runs[0].LogTail != "alpha log" {
+	if state.Runs[0].RunID != "a" || state.Runs[0].LogTail != "alpha log" || state.Runs[0].LogEvents != nil {
 		t.Fatalf("first run = %#v", state.Runs[0])
+	}
+	// Typed steps round-trip in order, nested todos included.
+	steps := state.Runs[1].LogEvents
+	if len(steps) != 2 || steps[0].Text != "Reviewing the diff." || steps[0].TS != 1790571833464 ||
+		steps[1].Tool != "todo" || len(steps[1].Todos) != 2 || steps[1].Todos[1].Status != "in_progress" {
+		t.Fatalf("second run steps = %#v", steps)
 	}
 
 	// A second push replaces the whole set, not merge it.

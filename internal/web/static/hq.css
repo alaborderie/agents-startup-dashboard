@@ -2379,65 +2379,45 @@ details[open] > summary .chev {
   margin-top: 6px;
 }
 
-.terminal {
-  position: relative;
-  margin-top: 16px;
-  border: 2px solid var(--shadow-ink);
-  border-radius: 14px;
-  background: #07090C;
-  box-shadow: var(--shadow-2);
+/* The log drawer is wide: the steps are read, not answered, so they take a
+   centred full-width column (livelog.css) under a fixed header. */
+.drawer.is-log {
+  width: min(1120px, 100vw);
 }
 
-.terminal-bar {
+.drawer.is-log .drawer-body {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #1E2330;
-  color: #8B93A7;
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
-}
-
-.terminal-bar i {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #FF6B6B;
-}
-
-.terminal-bar i:nth-child(2) { background: #FFE066; }
-.terminal-bar i:nth-child(3) { background: #69DB7C; }
-
-.terminal-bar span {
-  margin-left: 8px;
+  flex-direction: column;
+  gap: 12px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding-bottom: 0;
 }
 
-.log-pre {
-  height: min(62vh, 640px);
+.log-steps {
+  flex: 1 1 auto;
+  min-height: 240px;
+  margin: 4px -18px 0;
+  border-top: 2px solid var(--line);
+}
+
+.log-steps .ll-scroll {
+  padding-bottom: max(28px, env(safe-area-inset-bottom));
+}
+
+.log-fallback {
+  height: 100%;
   margin: 0;
-  padding: 12px 14px 20px;
+  padding: 12px 18px;
   overflow: auto;
-  color: #D3F9D8;
+  color: var(--ink-2);
   font-family: var(--font-mono);
   font-size: .8rem;
-  line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  tab-size: 4;
-}
-
-.jump-latest {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
 }
 
 .log-ended {
-  margin-top: 12px;
+  margin: 0;
   padding: 10px 12px;
   border-radius: 12px;
   background: var(--sunk);

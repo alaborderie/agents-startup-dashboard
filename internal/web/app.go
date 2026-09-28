@@ -22,7 +22,7 @@ import (
 
 const maxRequestBody = 1 << 20
 
-//go:embed templates/*.html static/app.css static/app.js static/hq.css static/hq.js
+//go:embed templates/*.html static/app.css static/app.js static/hq.css static/hq.js static/livelog.css static/livelog.js
 var webFiles embed.FS
 
 type DataStore interface {
@@ -72,7 +72,7 @@ func contentHashPath(name, extension string, body []byte) string {
 
 func New(dataStore DataStore, ingestToken string) (*App, error) {
 	assets := make(map[string]asset)
-	for _, name := range []string{"app.css", "app.js", "hq.css", "hq.js"} {
+	for _, name := range []string{"app.css", "app.js", "hq.css", "hq.js", "livelog.css", "livelog.js"} {
 		body, err := webFiles.ReadFile("static/" + name)
 		if err != nil {
 			return nil, err
@@ -203,6 +203,9 @@ type pageData struct {
 	LastSync       string
 	StylesheetPath string
 	ScriptPath     string
+	// The live log component, shared with HQ.
+	LiveLogStylesheetPath string
+	LiveLogScriptPath     string
 }
 
 type tokenFigureView struct {
@@ -356,6 +359,8 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	view.LastSync = syncLabel(a.now(), lastSync)
 	view.StylesheetPath = a.assetPath("app.css")
 	view.ScriptPath = a.assetPath("app.js")
+	view.LiveLogStylesheetPath = a.assetPath("livelog.css")
+	view.LiveLogScriptPath = a.assetPath("livelog.js")
 	if err := a.template.ExecuteTemplate(w, "index.html", view); err != nil {
 		return
 	}
@@ -690,6 +695,23 @@ func truncate(value *string, limit int) *string {
 const (
 	maxLiveRuns = 64
 	maxLogTail  = 64 << 10
+	// Typed transcript steps per run, newest kept, and per-field byte caps. The
+	// laptop already bounds each field in characters (bin/run_events.py STEP_*:
+	// message text 6000, command/output/diff 1500, title 240); these caps allow 4
+	// bytes a character, so they never cut what it sent, and only stop a bad push
+	// from bloating every page load and WebSocket frame.
+	maxLogSteps   = 250
+	maxStepText   = 24 << 10
+	maxStepField  = 6 << 10
+	maxStepTitle  = 1 << 10
+	maxStepTodos  = 50
+	maxStepIDSize = 200
+)
+
+var (
+	stepKinds    = map[string]bool{"message": true, "thinking": true, "tool": true, "error": true, "notice": true, "result": true, "raw": true}
+	stepTools    = map[string]bool{"shell": true, "read": true, "edit": true, "web": true, "task": true, "todo": true, "skill": true, "other": true}
+	stepStatuses = map[string]bool{"running": true, "done": true, "error": true}
 )
 
 // ingestLive mirrors the running-agent set. Unlike the venture snapshot this
@@ -766,6 +788,7 @@ func validateLiveRuns(runs []store.LiveRun) ([]store.LiveRun, []string) {
 			}
 			run.LogTail = "[…]\n" + cut
 		}
+		run.LogEvents = sanitizeSteps(run.LogEvents)
 		if at, exists := seen[run.RunID]; exists {
 			valid[at] = run
 			continue
@@ -774,6 +797,78 @@ func validateLiveRuns(runs []store.LiveRun) ([]store.LiveRun, []string) {
 		valid = append(valid, run)
 	}
 	return valid, warnings
+}
+
+// sanitizeSteps bounds a run's typed transcript and maps anything unknown onto
+// values the page can draw: an unknown kind is shown as plain output.
+func sanitizeSteps(steps []store.LogStep) []store.LogStep {
+	if len(steps) == 0 {
+		return nil
+	}
+	if len(steps) > maxLogSteps {
+		steps = steps[len(steps)-maxLogSteps:]
+	}
+	out := make([]store.LogStep, 0, len(steps))
+	seen := make(map[string]bool, len(steps))
+	for i, step := range steps {
+		if !stepKinds[step.Kind] {
+			step.Kind = "raw"
+		}
+		if step.Kind == "tool" && !stepTools[step.Tool] {
+			step.Tool = "other"
+		}
+		if step.Kind != "tool" {
+			step.Tool = ""
+		}
+		if !stepStatuses[step.Status] {
+			step.Status = ""
+		}
+		// The page keys its updates on ids, so each must be unique. A repeat gets
+		// the first free numbered suffix; the counter guarantees one exists.
+		id := clipBytes(step.ID, maxStepIDSize)
+		if id == "" {
+			id = fmt.Sprintf("step-%d", i)
+		}
+		step.ID = id
+		for n := 2; seen[step.ID]; n++ {
+			step.ID = fmt.Sprintf("%s~%d", id, n)
+		}
+		seen[step.ID] = true
+		step.Name = clipBytes(step.Name, maxStepTitle)
+		step.Title = clipBytes(step.Title, maxStepTitle)
+		step.Detail = clipBytes(step.Detail, maxStepTitle)
+		step.Text = clipBytes(step.Text, maxStepText)
+		step.Command = clipBytes(step.Command, maxStepField)
+		step.Output = clipBytes(step.Output, maxStepField)
+		step.Diff = clipBytes(step.Diff, maxStepField)
+		step.Adds = max(step.Adds, 0)
+		step.Dels = max(step.Dels, 0)
+		step.Tokens = max(step.Tokens, 0)
+		step.MS = max(step.MS, 0)
+		step.TS = max(step.TS, 0)
+		if len(step.Todos) > maxStepTodos {
+			step.Todos = step.Todos[:maxStepTodos]
+		}
+		for j := range step.Todos {
+			step.Todos[j].Text = clipBytes(step.Todos[j].Text, maxStepTitle)
+			step.Todos[j].Status = clipBytes(step.Todos[j].Status, 32)
+		}
+		out = append(out, step)
+	}
+	return out
+}
+
+// clipBytes shortens value to at most limit bytes on a rune boundary, marking the cut.
+func clipBytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	const mark = "…"
+	cut := value[:limit-len(mark)]
+	for len(cut) > 0 && !utf8.RuneStart(value[len(cut)]) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + mark
 }
 
 // liveJSON is what the page polls. It is public but never cached, and carries
