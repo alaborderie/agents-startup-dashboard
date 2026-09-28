@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -391,7 +392,8 @@ func TestDashboardServesContentHashedStylesheet(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	body := response.Body.String()
-	if got := strings.Count(body, `<link rel="stylesheet"`); got != 1 {
+	// The page stylesheet and the live log component's.
+	if got := strings.Count(body, `<link rel="stylesheet"`); got != 2 {
 		t.Fatalf("stylesheet link count = %d body = %s", got, body)
 	}
 	if strings.Contains(body, "<style") {
@@ -550,8 +552,25 @@ func TestDashboardServesContentHashedScript(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	body := response.Body.String()
-	if got := strings.Count(body, `<script defer src="`); got != 1 {
+	if got := strings.Count(body, `<script defer src="`); got != 2 {
 		t.Fatalf("script tag count = %d body = %s", got, body)
+	}
+	// The live log component loads first: deferred scripts run in order.
+	component := regexp.MustCompile(`<script defer src="(/static/livelog\.[0-9a-f]{8,}\.js)">`).FindStringSubmatchIndex(body)
+	page := strings.Index(body, `<script defer src="/static/app.`)
+	if component == nil || page == -1 || component[0] > page {
+		t.Fatalf("live log script must precede the page script: %s", body)
+	}
+	for _, pattern := range []string{`src="(/static/livelog\.[0-9a-f]{8,}\.js)"`, `href="(/static/livelog\.[0-9a-f]{8,}\.css)"`} {
+		asset := regexp.MustCompile(pattern).FindStringSubmatch(body)
+		if len(asset) != 2 {
+			t.Fatalf("page missing %s: %s", pattern, body)
+		}
+		served := httptest.NewRecorder()
+		handler.ServeHTTP(served, httptest.NewRequest(http.MethodGet, asset[1], nil))
+		if served.Code != http.StatusOK || !strings.Contains(served.Body.String(), "ll-") {
+			t.Fatalf("%s: status = %d", asset[1], served.Code)
+		}
 	}
 	match := regexp.MustCompile(`<script defer src="(/static/app\.[0-9a-f]{8,}\.js)">`).FindStringSubmatch(body)
 	if len(match) != 2 {
@@ -661,6 +680,64 @@ func TestIngestLiveTruncationPreservesUTF8(t *testing.T) {
 	}
 	if len(dataStore.appliedLive.Runs) != 1 || !utf8.ValidString(dataStore.appliedLive.Runs[0].LogTail) {
 		t.Fatal("truncation split a multi-byte character")
+	}
+}
+
+func TestIngestLiveSanitizesTypedSteps(t *testing.T) {
+	dataStore := &stubStore{}
+	app := newTestApp(t, dataStore)
+	app.now = func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) }
+	steps := make([]string, 0, maxLogSteps+10)
+	for i := 0; i < maxLogSteps+5; i++ {
+		steps = append(steps, fmt.Sprintf(`{"id":"s%d","kind":"tool","tool":"shell","status":"done","title":"step %d"}`, i, i))
+	}
+	steps = append(steps,
+		`{"id":"m","kind":"message","tool":"shell","text":"`+strings.Repeat("é", maxStepText)+`"}`,
+		`{"id":"m","kind":"banner","title":"unknown kind"}`,
+		`{"kind":"tool","tool":"teleport","status":"exploded","adds":-4,"todos":[{"text":"a","status":"completed"}]}`,
+	)
+	payload := `{"generated_at":"2026-09-24T12:00:00Z","runs":[{"run_id":"a","slug":"alpha","role":"developer","log_events":[` +
+		strings.Join(steps, ",") + `]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/ingest/live", strings.NewReader(payload))
+	request.Header.Set("Authorization", "Bearer fake-test-token")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %q", response.Code, response.Body.String())
+	}
+	got := dataStore.appliedLive.Runs[0].LogEvents
+	if len(got) != maxLogSteps {
+		t.Fatalf("steps = %d, want the newest %d", len(got), maxLogSteps)
+	}
+	message, unknown, odd := got[len(got)-3], got[len(got)-2], got[len(got)-1]
+	if message.Tool != "" || len(message.Text) > maxStepText || !utf8.ValidString(message.Text) || !strings.HasSuffix(message.Text, "…") {
+		t.Fatalf("message not bounded: tool=%q len=%d", message.Tool, len(message.Text))
+	}
+	if unknown.Kind != "raw" || unknown.ID == "m" || unknown.ID == "" {
+		t.Fatalf("unknown kind or duplicate id kept: %#v", unknown)
+	}
+	if odd.Tool != "other" || odd.Status != "" || odd.Adds != 0 || odd.ID == "" || len(odd.Todos) != 1 {
+		t.Fatalf("tool step not normalized: %#v", odd)
+	}
+	seen := map[string]bool{}
+	for _, step := range got {
+		if seen[step.ID] {
+			t.Fatalf("duplicate step id %q", step.ID)
+		}
+		seen[step.ID] = true
+	}
+}
+
+func TestLiveJSONCarriesTypedSteps(t *testing.T) {
+	app := newTestApp(t, &stubStore{live: store.LiveState{Runs: []store.LiveRun{{
+		RunID: "a", Slug: "alpha", Role: "designer", Status: "running",
+		LogEvents: []store.LogStep{{ID: "toolu_1", Kind: "tool", Tool: "edit", Name: "Edit", Status: "done", Title: "app.css", Adds: 3}},
+	}}}})
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/live.json", nil))
+	want := `"log_events":[{"id":"toolu_1","kind":"tool","tool":"edit","name":"Edit","status":"done","title":"app.css","adds":3}]`
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("live feed missing typed steps: %s", response.Body.String())
 	}
 }
 

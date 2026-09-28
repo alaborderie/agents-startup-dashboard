@@ -81,13 +81,25 @@ The same push-only rule governs the "running now" panel. While a tick runs,
 credential from each log tail before it leaves the laptop; the service renders
 what it is given and never reads the laptop's disk.
 
+A run whose engine writes a JSON event stream (opencode workers, the Claude
+designer) arrives as typed steps in `log_events` instead of a text tail: the
+agent's messages, its thinking, each tool call (`shell`, `read`, `edit`, `web`,
+`task`, `todo`, `skill`, `other`) with its outcome, errors, and the final result.
+The public page and HQ draw them with one shared component
+(`static/livelog.js`, `static/livelog.css`): a rectangle per step, its border
+colour by type, tool calls as one-line rows that open for the command, output or
+diff, and the agent's own messages as the standout cards. `log_tail` remains for
+plain-text logs.
+
 **Treat every log tail as public.** `GET /live.json` is unauthenticated, so the
 redaction is the only thing standing between a worker's raw output and the open
 internet. The redactor is deliberately fail-closed (it drops long opaque blobs
 and any assignment to a credential-shaped name, and aligns the tail to a line
 boundary), but it is a heuristic, not a guarantee: do not run a worker whose
 output is genuinely confidential. The endpoint is `noindex`, `no-store`, bounded
-(64 runs, 64 KB per tail), and the panel is scoped to a personal dashboard.
+(64 runs, 64 KB per tail, 250 steps per run with per-field caps), and the panel is
+scoped to a personal dashboard. The same redactor runs over every string of every
+step.
 
 Unlike snapshot ingest, the live feed is a **replace-the-whole-set** write: every
 push deletes the current `live_runs` and inserts exactly what it carries. A push
@@ -227,11 +239,29 @@ entire running set: an empty array clears it.
       "status": "running",
       "started_at": "2026-09-24T12:00:00+00:00",
       "log_bytes": 56688,
-      "log_tail": "already redacted on the laptop; <= 64 KB"
+      "log_tail": "",
+      "log_events": [
+        {"id": "prt_01", "kind": "message", "text": "Checking the deploy.", "ts": 1790571833464},
+        {"id": "call_01", "kind": "tool", "tool": "shell", "name": "bash", "status": "done",
+         "title": "go test ./...", "output": "ok  ./internal/web", "ms": 1500},
+        {"id": "call_02", "kind": "tool", "tool": "edit", "name": "apply_patch", "status": "done",
+         "title": "internal/web/app.go", "adds": 2, "dels": 1, "diff": "-old\n+new\n+more"}
+      ]
     }
   ]
 }
 ```
+
+`log_tail` is plain text (already redacted, <= 64 KB) and is sent only when the
+run's log is not an event stream. `log_events` is the typed transcript, oldest
+first. Every step has `id` (stable across pushes) and `kind`: `message`,
+`thinking`, `tool`, `error`, `notice`, `result` or `raw`. A `tool` step adds
+`tool` (the category the page colours by), `name` (the engine's tool name),
+`status` (`running`, `done`, `error`), `title`, and when known `detail`,
+`command`, `output`, `diff`, `adds`/`dels`, `todos` (`[{text, status}]`) and `ms`.
+Optional on any step: `text`, `tokens`, `ts` (epoch ms) and `sub` (the step came
+from a sub-agent). The server keeps the newest 250 steps, caps each field, maps
+an unknown `kind` to `raw` and an unknown `tool` to `other`, and makes ids unique.
 
 Response: `{ "status": "ok", "runs": 1, "warnings": [] }`. Envelope limits: 1 MB
 body, at most 64 runs, `generated_at` required and no more than an hour ahead. A

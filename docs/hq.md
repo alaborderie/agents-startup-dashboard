@@ -218,7 +218,9 @@ remains the complete archive, including abandoned reasons.
 ```
 
 `LiveState` is exactly today's `/live.json` body:
-`{"generated_at","cycle","tick_running","age_seconds","runs":[{"run_id","slug","role","leg","engine","model","status","started_at","log_bytes","log_tail"}]}`.
+`{"generated_at","cycle","tick_running","age_seconds","runs":[{"run_id","slug","role","leg","engine","model","status","started_at","log_bytes","log_tail","log_events"}]}`.
+`log_events` is the run's typed transcript (see the README's live feed section);
+the log drawer draws it with `static/livelog.js`.
 
 `SnapshotStatus` is today's `/snapshot-status.json` body:
 `{"generated_at","last_tick","next_tick","queued_notes":{slug:[text]}}`.

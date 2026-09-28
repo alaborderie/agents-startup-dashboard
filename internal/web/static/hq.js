@@ -522,7 +522,7 @@
   var ui = {
     conn: "connecting", pollOk: null, authLost: false,
     drafts: {}, modes: {}, errors: {}, busy: {}, open: {}, sigs: {}, cids: {},
-    drawer: null, drawerHistory: [], returnFk: null, logStick: true, lastRun: null,
+    drawer: null, drawerHistory: [], returnFk: null, logStick: true, lastRun: null, log: null,
     feedFilter: "all", feedSeen: null, cardStage: null, archiveQuery: "", archiveSlugs: null, celebrated: {}
   };
 
@@ -2043,45 +2043,40 @@
     var meta = h("div", { class: "log-meta" },
       run && run.model ? h("span", { class: "chip mono", text: str(run.engine) + " · " + shortModel(run.model) }) : null,
       run && run.leg ? h("span", { class: "chip" + (run.leg === "fallback" ? " chip-leg-fallback" : ""), text: str(run.leg) + " leg" }) : null,
-      r ? h("span", { class: "chip" }, "running ", h("span", { class: "elapsed", "data-since": str(run.started_at) })) : h("span", { class: "chip chip-status-done", text: "finished" }));
+      r ? h("span", { class: "chip" }, "running ", h("span", { class: "elapsed", "data-since": str(run.started_at) })) : h("span", { class: "chip chip-status-done", text: "finished" }),
+      run && run.log_bytes ? h("span", { class: "chip mono", text: fmtTokens(run.log_bytes) + "B of events" }) : null);
     var head = h("div", { class: "log-head" + (r ? " is-working" : "") }, avatar(d.role, "lg"),
       h("div", null, h("button", { type: "button", class: "linklike", "data-fk": "log:venture", text: titleOf(d.slug), on: { click: function () { openVenture(d.slug, true); } } }), meta));
     roleClass(head, d.role);
     put(frag, head);
-    var pre = h("pre", { class: "log-pre", id: "log-pre", tabindex: "0", "aria-label": "Agent output", "aria-live": "off" });
-    pre.textContent = (run && run.log_tail) || "Waiting for output…";
-    var jump = h("button", { type: "button", class: "btn btn-sm btn-primary jump-latest", id: "log-jump", hidden: true, on: { click: function () {
-      ui.logStick = true; pre.scrollTop = pre.scrollHeight; jump.hidden = true;
-    } } }, "Jump to latest");
-    pre.addEventListener("scroll", function () {
-      var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
-      ui.logStick = atBottom;
-      jump.hidden = atBottom;
-    });
-    put(frag, h("div", { class: "terminal" },
-      h("div", { class: "terminal-bar", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("span", { text: (run ? str(run.run_id) + " · " : "") + (run && run.log_bytes ? fmtTokens(run.log_bytes) + "B" : "") })),
-      pre, jump));
-    if (!r) { put(frag, h("p", { class: "log-ended", role: "status", text: "This run has ended (or the live feed stopped). Showing its last output." })); }
-    window.requestAnimationFrame(function () { if (ui.logStick) { pre.scrollTop = pre.scrollHeight; } });
+    if (!r) { put(frag, h("p", { class: "log-ended", role: "status", text: "This run has ended (or the live feed stopped). Showing its last steps." })); }
+    // Typed steps (messages, thoughts, tool calls), drawn by livelog.js. The role
+    // class colours the agent's own messages in its crew colour.
+    var host = h("div", { class: "log-steps", id: "log-steps" });
+    roleClass(host, d.role);
+    ui.log = window.LiveLog ? window.LiveLog.mount(host, {
+      who: roleName(d.role), label: roleName(d.role) + " steps", stick: ui.logStick,
+      onStick: function (atBottom) { ui.logStick = atBottom; }
+    }) : null;
+    if (ui.log) { ui.log.update(run, { working: !!r && !liveStale(), ended: !r }); }
+    else { put(host, h("pre", { class: "log-fallback", text: (run && run.log_tail) || "Waiting for output…" })); }
+    put(frag, host);
     return frag;
   }
 
   function updateLogText() {
-    var pre = $("log-pre");
-    if (!pre || !ui.drawer || ui.drawer.type !== "log") { return; }
+    if (!ui.log || !ui.drawer || ui.drawer.type !== "log") { return; }
     var r = runById(ui.drawer.runId);
     if (!r) { return; }
-    var text = str(r.log_tail) || "Waiting for output…";
-    if (pre.textContent !== text) {
-      pre.textContent = text;
-      if (ui.logStick) { pre.scrollTop = pre.scrollHeight; } else { $("log-jump").hidden = false; }
-    }
+    ui.log.update(r, { working: !liveStale() });
   }
 
   function renderDrawer() {
     if (!ui.drawer) { return; }
     var d = ui.drawer;
     var body = $("drawer-body");
+    $("drawer").classList.toggle("is-log", d.type === "log");
+    if (d.type !== "log") { ui.log = null; }
     if (d.type === "venture") {
       var hv = hqBySlug(d.slug);
       var pub = pubBySlug(d.slug);

@@ -6,6 +6,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>Agent startup dashboard</title>
   <link rel="stylesheet" href="{{.StylesheetPath}}">
+  <link rel="stylesheet" href="{{.LiveLogStylesheetPath}}">
+  <script defer src="{{.LiveLogScriptPath}}"></script>
   <script defer src="{{.ScriptPath}}"></script>
 </head>
 <body>
@@ -154,7 +156,7 @@
       </div>
       <button type="button" class="log-close" id="log-close" aria-label="Close agent output">×</button>
     </header>
-    <pre class="log-body" id="log-body" tabindex="0">Waiting for output…</pre>
+    <div class="log-body" id="log-body"><p class="log-waiting">Waiting for output…</p></div>
   </aside>
 </body>
 </html>

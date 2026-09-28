@@ -346,9 +346,8 @@
       closeDrawer();
       return;
     }
-    els.body.textContent = run.log_tail || "Waiting for output…";
+    showSteps(run);
     els.sub.textContent = runSubtitle(run);
-    scrollLogToEnd();
     // Repaint the selection ring after the list was rebuilt.
     Array.prototype.forEach.call(
       els.list.querySelectorAll(".run"),
@@ -371,8 +370,11 @@
     els.drawer.classList.add("is-open");
     els.title.textContent = ventureTitle(run.slug) + " · " + run.role;
     els.sub.textContent = runSubtitle(run);
-    els.body.textContent = run.log_tail || "Waiting for output…";
-    scrollLogToEnd();
+    // A fresh view per run: it starts at the latest step with nothing expanded.
+    els.log = window.LiveLog
+      ? window.LiveLog.mount(els.body, { who: roleLabel(run.role), label: "Steps of the " + run.role + " run" })
+      : null;
+    showSteps(run);
     Array.prototype.forEach.call(
       els.list.querySelectorAll(".run"),
       function (li) {
@@ -398,8 +400,20 @@
     return els.drawer.getAttribute("aria-hidden") !== "true";
   }
 
-  function scrollLogToEnd() {
+  // The run's typed steps (messages, thoughts, tool calls); the plain text tail
+  // only when the steps component did not load.
+  function showSteps(run) {
+    if (els.log) {
+      els.log.update(run, { working: !isStale() });
+      return;
+    }
+    els.body.textContent = run.log_tail || "Waiting for output…";
     els.body.scrollTop = els.body.scrollHeight;
+  }
+
+  function roleLabel(role) {
+    var name = String(role || "agent");
+    return name.charAt(0).toUpperCase() + name.slice(1);
   }
 
   function ventureTitle(slug) {

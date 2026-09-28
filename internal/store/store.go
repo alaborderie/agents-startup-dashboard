@@ -569,6 +569,37 @@ type LiveRun struct {
 	StartedAt *time.Time `json:"started_at,omitempty"`
 	LogBytes  int64      `json:"log_bytes"`
 	LogTail   string     `json:"log_tail,omitempty"`
+	LogEvents []LogStep  `json:"log_events,omitempty"`
+}
+
+// LogStep is one typed entry of a run's transcript: a message the agent wrote, a
+// thought, a tool call with its outcome, an error. The laptop builds and redacts
+// them (bin/run_events.py steps); the page styles each by Kind and Tool.
+type LogStep struct {
+	ID      string    `json:"id"`
+	Kind    string    `json:"kind"`
+	Tool    string    `json:"tool,omitempty"`
+	Name    string    `json:"name,omitempty"`
+	Status  string    `json:"status,omitempty"`
+	Title   string    `json:"title,omitempty"`
+	Detail  string    `json:"detail,omitempty"`
+	Text    string    `json:"text,omitempty"`
+	Command string    `json:"command,omitempty"`
+	Output  string    `json:"output,omitempty"`
+	Diff    string    `json:"diff,omitempty"`
+	Adds    int       `json:"adds,omitempty"`
+	Dels    int       `json:"dels,omitempty"`
+	Tokens  int       `json:"tokens,omitempty"`
+	MS      int64     `json:"ms,omitempty"`
+	TS      int64     `json:"ts,omitempty"`
+	Sub     bool      `json:"sub,omitempty"`
+	Todos   []LogTodo `json:"todos,omitempty"`
+}
+
+// LogTodo is one item of a todo-list step.
+type LogTodo struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
 }
 
 // LivePayload is the full running-set snapshot pushed by the laptop.
@@ -608,12 +639,20 @@ func (s *Store) ApplyLive(ctx context.Context, payload LivePayload) error {
 		return fmt.Errorf("clear live runs: %w", err)
 	}
 	for _, run := range payload.Runs {
+		steps := run.LogEvents
+		if steps == nil {
+			steps = []LogStep{}
+		}
+		events, err := json.Marshal(steps)
+		if err != nil {
+			return fmt.Errorf("encode live run %q steps: %w", run.RunID, err)
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO live_runs
-				(run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail, received_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+				(run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail, log_events, received_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::json, now())`,
 			run.RunID, run.Slug, run.Role, run.Leg, run.Engine, run.Model,
-			run.Status, run.StartedAt, run.LogBytes, run.LogTail,
+			run.Status, run.StartedAt, run.LogBytes, run.LogTail, string(events),
 		); err != nil {
 			return fmt.Errorf("insert live run %q: %w", run.RunID, err)
 		}
@@ -671,7 +710,7 @@ func (s *Store) Live(ctx context.Context) (LiveState, error) {
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail
+		SELECT run_id, slug, role, leg, engine, model, status, started_at, log_bytes, log_tail, log_events::text
 		FROM live_runs
 		ORDER BY started_at ASC NULLS LAST, slug, role`)
 	if err != nil {
@@ -680,11 +719,18 @@ func (s *Store) Live(ctx context.Context) (LiveState, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var run LiveRun
+		var events string
 		if err := rows.Scan(
 			&run.RunID, &run.Slug, &run.Role, &run.Leg, &run.Engine, &run.Model,
-			&run.Status, &run.StartedAt, &run.LogBytes, &run.LogTail,
+			&run.Status, &run.StartedAt, &run.LogBytes, &run.LogTail, &events,
 		); err != nil {
 			return LiveState{}, fmt.Errorf("scan live run: %w", err)
+		}
+		if err := json.Unmarshal([]byte(events), &run.LogEvents); err != nil {
+			return LiveState{}, fmt.Errorf("decode live run %q steps: %w", run.RunID, err)
+		}
+		if len(run.LogEvents) == 0 {
+			run.LogEvents = nil
 		}
 		state.Runs = append(state.Runs, run)
 	}
