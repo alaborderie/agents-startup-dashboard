@@ -696,12 +696,14 @@ const (
 	maxLiveRuns = 64
 	maxLogTail  = 64 << 10
 	// Typed transcript steps per run, newest kept, and per-field byte caps. The
-	// laptop already bounds them; these only stop a bad push from bloating every
-	// page load and WebSocket frame.
+	// laptop already bounds each field in characters (bin/run_events.py STEP_*:
+	// message text 6000, command/output/diff 1500, title 240); these caps allow 4
+	// bytes a character, so they never cut what it sent, and only stop a bad push
+	// from bloating every page load and WebSocket frame.
 	maxLogSteps   = 250
-	maxStepText   = 8 << 10
-	maxStepField  = 2 << 10
-	maxStepTitle  = 512
+	maxStepText   = 24 << 10
+	maxStepField  = 6 << 10
+	maxStepTitle  = 1 << 10
 	maxStepTodos  = 50
 	maxStepIDSize = 200
 )
@@ -821,9 +823,15 @@ func sanitizeSteps(steps []store.LogStep) []store.LogStep {
 		if !stepStatuses[step.Status] {
 			step.Status = ""
 		}
-		step.ID = clipBytes(step.ID, maxStepIDSize)
-		for step.ID == "" || seen[step.ID] {
-			step.ID = fmt.Sprintf("step-%d-%d", i, len(seen))
+		// The page keys its updates on ids, so each must be unique. A repeat gets
+		// the first free numbered suffix; the counter guarantees one exists.
+		id := clipBytes(step.ID, maxStepIDSize)
+		if id == "" {
+			id = fmt.Sprintf("step-%d", i)
+		}
+		step.ID = id
+		for n := 2; seen[step.ID]; n++ {
+			step.ID = fmt.Sprintf("%s~%d", id, n)
 		}
 		seen[step.ID] = true
 		step.Name = clipBytes(step.Name, maxStepTitle)

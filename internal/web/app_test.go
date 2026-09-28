@@ -728,6 +728,38 @@ func TestIngestLiveSanitizesTypedSteps(t *testing.T) {
 	}
 }
 
+func TestSanitizeStepsMakesCollidingIDsUnique(t *testing.T) {
+	// Ids chosen to collide with the names a repeat or a missing id is given.
+	ids := []string{"step-1-1", "step-1-1", "a", "a", "a~2", "a", "", "step-6", "step-6~2", "step-6"}
+	steps := make([]store.LogStep, len(ids))
+	for i, id := range ids {
+		steps[i] = store.LogStep{ID: id, Kind: "message"}
+	}
+	done := make(chan []store.LogStep, 1)
+	go func() { done <- sanitizeSteps(steps) }()
+	var got []store.LogStep
+	select {
+	case got = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sanitizeSteps did not return: id loop never terminates")
+	}
+	if len(got) != len(ids) {
+		t.Fatalf("steps = %d, want %d", len(got), len(ids))
+	}
+	seen := map[string]bool{}
+	for i, step := range got {
+		if step.ID == "" || seen[step.ID] {
+			t.Fatalf("step %d id %q is empty or repeated: %#v", i, step.ID, got)
+		}
+		seen[step.ID] = true
+	}
+	// The first holder of an id keeps it and a repeat is numbered, so the page's
+	// keyed update stays stable across pushes.
+	if got[0].ID != "step-1-1" || got[1].ID != "step-1-1~2" || got[2].ID != "a" || got[3].ID != "a~2" || got[6].ID != "step-6" {
+		t.Fatalf("ids = %v", got)
+	}
+}
+
 func TestLiveJSONCarriesTypedSteps(t *testing.T) {
 	app := newTestApp(t, &stubStore{live: store.LiveState{Runs: []store.LiveRun{{
 		RunID: "a", Slug: "alpha", Role: "designer", Status: "running",
