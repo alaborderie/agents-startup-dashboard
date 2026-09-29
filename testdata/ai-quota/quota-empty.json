@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-09-25T23:10:00Z",
+  "headline": null,
+  "next_change_at": null,
+  "providers": [
+    {"age_secs": null, "balance": null, "display_name": "Claude", "fetched_at": null, "freshness": "missing", "last_attempt_at": null, "notes": [], "plan": null, "provider": "claude", "source": null, "spend": [], "status": {"hint": null, "kind": null, "message": null, "state": "ok"}, "top_window_id": null, "windows": []},
+    {"age_secs": null, "balance": null, "display_name": "ChatGPT", "fetched_at": null, "freshness": "missing", "last_attempt_at": null, "notes": [], "plan": null, "provider": "codex", "source": null, "spend": [], "status": {"hint": null, "kind": null, "message": null, "state": "ok"}, "top_window_id": null, "windows": []},
+    {"age_secs": null, "balance": null, "display_name": "OpenCode Go", "fetched_at": null, "freshness": "missing", "last_attempt_at": null, "notes": [], "plan": null, "provider": "opencode_go", "source": null, "spend": [], "status": {"hint": null, "kind": null, "message": null, "state": "ok"}, "top_window_id": null, "windows": []},
+    {"age_secs": null, "balance": null, "display_name": "OpenCode Zen", "fetched_at": null, "freshness": "missing", "last_attempt_at": null, "notes": [], "plan": null, "provider": "opencode_zen", "source": null, "spend": [], "status": {"hint": null, "kind": null, "message": null, "state": "ok"}, "top_window_id": null, "windows": []}
+  ]
+}

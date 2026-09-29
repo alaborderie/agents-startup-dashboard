@@ -138,16 +138,64 @@ func (a *App) fetchQuota(r *http.Request, token string) (QuotaView, int, error) 
 	return view, response.StatusCode, err
 }
 
-// decodeQuota is expanded by the contract-pinning issue; it never relays raw JSON.
+// decodeQuota pins the subset of ai-quota's v1 contract the card displays.
 func decodeQuota(data []byte) (QuotaView, error) {
 	var upstream struct {
-		GeneratedAt string            `json:"generated_at"`
-		Providers   []json.RawMessage `json:"providers"`
+		GeneratedAt string `json:"generated_at"`
+		Providers   []struct {
+			Provider    string `json:"provider"`
+			DisplayName string `json:"display_name"`
+			Plan        string `json:"plan"`
+			Freshness   string `json:"freshness"`
+			Status      struct {
+				State   string `json:"state"`
+				Message string `json:"message"`
+			} `json:"status"`
+			Windows []struct {
+				ID               string  `json:"id"`
+				Label            string  `json:"label"`
+				HeadlineEligible bool    `json:"headline_eligible"`
+				UsedPercent      float64 `json:"used_percent"`
+				Severity         string  `json:"severity"`
+				ResetsAt         string  `json:"resets_at"`
+				Limited          bool    `json:"limited"`
+			} `json:"windows"`
+			Balance *QuotaBalance `json:"balance"`
+		} `json:"providers"`
 	}
 	if err := json.Unmarshal(data, &upstream); err != nil || upstream.GeneratedAt == "" || upstream.Providers == nil {
 		return QuotaView{}, errors.New("invalid upstream quota")
 	}
-	return QuotaView{State: "ok", GeneratedAt: upstream.GeneratedAt, Providers: []QuotaProvider{}}, nil
+	view := QuotaView{State: "ok", GeneratedAt: upstream.GeneratedAt, Providers: []QuotaProvider{}}
+	for _, source := range upstream.Providers {
+		switch source.Provider {
+		case "claude", "codex", "opencode_go", "opencode_zen":
+		default:
+			continue
+		}
+		provider := QuotaProvider{
+			Provider: source.Provider, DisplayName: source.DisplayName, Plan: source.Plan,
+			Freshness: source.Freshness, StatusState: source.Status.State,
+			StatusMessage: source.Status.Message, Windows: []QuotaWindow{}, Balance: source.Balance,
+		}
+		for _, window := range source.Windows {
+			if !window.HeadlineEligible {
+				continue
+			}
+			severity := window.Severity
+			switch severity {
+			case "ok", "warn", "critical", "limited":
+			default:
+				severity = "warn"
+			}
+			provider.Windows = append(provider.Windows, QuotaWindow{
+				ID: window.ID, Label: window.Label, UsedPercent: window.UsedPercent,
+				Severity: severity, ResetsAt: window.ResetsAt, Limited: window.Limited,
+			})
+		}
+		view.Providers = append(view.Providers, provider)
+	}
+	return view, nil
 }
 
 func (a *App) hqQuota(w http.ResponseWriter, r *http.Request) {
