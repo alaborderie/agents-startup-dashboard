@@ -40,6 +40,9 @@ func TestQuotaTokenFlowIsSessionBoundAndForgetsOnLogout(t *testing.T) {
 	if got := get(first); got.Code != 200 || !strings.Contains(got.Body.String(), `"state":"ok"`) {
 		t.Fatalf("stored quota: %d %s", got.Code, got.Body.String())
 	}
+	if got := get(first); !strings.Contains(got.Body.String(), `"providers":[]`) {
+		t.Fatalf("empty upstream provider set must reach the card: %s", got.Body.String())
+	}
 	if got := get(second); !strings.Contains(got.Body.String(), `"needs_token"`) {
 		t.Fatalf("second session saw quota: %s", got.Body.String())
 	}

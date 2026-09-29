@@ -22,7 +22,7 @@ import (
 
 const maxRequestBody = 1 << 20
 
-//go:embed templates/*.html static/app.css static/app.js static/hq.css static/hq.js static/livelog.css static/livelog.js
+//go:embed templates/*.html static/app.css static/app.js static/hq.css static/hq.js static/quota.js static/livelog.css static/livelog.js
 var webFiles embed.FS
 
 type DataStore interface {
@@ -78,7 +78,7 @@ func contentHashPath(name, extension string, body []byte) string {
 
 func New(dataStore DataStore, ingestToken string) (*App, error) {
 	assets := make(map[string]asset)
-	for _, name := range []string{"app.css", "app.js", "hq.css", "hq.js", "livelog.css", "livelog.js"} {
+	for _, name := range []string{"app.css", "app.js", "hq.css", "hq.js", "quota.js", "livelog.css", "livelog.js"} {
 		body, err := webFiles.ReadFile("static/" + name)
 		if err != nil {
 			return nil, err

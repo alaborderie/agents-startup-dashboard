@@ -669,6 +669,14 @@ kbd {
   outline: none;
 }
 
+.hq-side {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
 .panel {
   grid-column: 1 / -1;
   min-width: 0;
@@ -752,7 +760,59 @@ kbd {
   .panel-inbox { grid-column: span 5; align-self: start; }
   .panel-crew { grid-column: span 7; align-self: start; }
   .panel-activity { grid-column: span 7; }
-  .panel-ideas { grid-column: span 5; align-self: start; }
+  .hq-side { grid-column: span 5; align-self: start; }
+}
+
+/* quota */
+.panel-quota {
+  --quota-track: var(--sunk);
+  --quota-bar-h: 12px;
+  --quota-ok: var(--ok);
+  --quota-warn: var(--warn);
+  --quota-bad: var(--bad);
+}
+.panel-quota .h-glyph { background: var(--info); transform: rotate(-4deg); }
+.q-prov { padding: 12px 0; border-top: 1px solid var(--line); }
+.q-prov:first-child { border-top: 0; padding-top: 4px; }
+.q-prov-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; min-width: 0; }
+.q-prov-head h3 { font-size: var(--t-h3); overflow-wrap: anywhere; }
+.q-plan { font: 700 var(--t-xs)/1 var(--font-mono); color: var(--ink-3); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 8px; }
+.q-fresh { margin-left: auto; font-size: var(--t-xs); color: var(--ink-3); }
+.q-fresh.stale { color: var(--warn); }
+.q-win { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr) 3rem; gap: 4px 10px; align-items: center; margin-top: 6px; }
+.q-win .lbl { font-size: var(--t-sm); color: var(--ink-2); }
+.q-win .pct { font: 800 var(--t-sm)/1 var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.q-bar { height: var(--quota-bar-h); border: 2px solid var(--shadow-ink); border-radius: var(--r-pill); background: var(--quota-track); overflow: hidden; }
+.q-bar i { display: block; height: 100%; width: var(--v); background: var(--c); border-radius: var(--r-pill); transition: width var(--dur-2) var(--ease-out); }
+.q-bar.ok { --c: var(--quota-ok); }.q-bar.warn { --c: var(--quota-warn); }.q-bar.bad { --c: var(--quota-bad); }
+.q-reset { grid-column: 2 / -1; font-size: var(--t-xs); color: var(--ink-3); }
+.q-sev { font: 800 var(--t-xs)/1 var(--font-display); text-transform: uppercase; letter-spacing: .05em; margin-left: 6px; }
+.q-sev.warn { color: var(--warn); }.q-sev.bad { color: var(--bad); }
+.q-balance { display: flex; justify-content: space-between; gap: 8px; font-size: var(--t-sm); color: var(--ink-2); }
+.q-balance b { font-family: var(--font-mono); color: var(--ink); }
+.q-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 2px solid var(--line); border-radius: var(--r-inner); background: var(--sunk); color: var(--ink-2); font-size: var(--t-sm); }
+.q-note.err { border-color: var(--bad); }
+.q-form label { display: block; font: 800 var(--t-sm)/1.2 var(--font-display); margin-bottom: 6px; }
+.q-form input { min-width: 0; width: 100%; min-height: 44px; padding: 8px 12px; border: 2px solid var(--line-strong); border-radius: var(--r-inner); background: var(--sunk); }
+.q-form input[aria-invalid="true"] { border-color: var(--bad); }
+.q-field { display: flex; gap: 8px; }
+.q-field .btn { min-height: 44px; }
+.q-help { font-size: var(--t-xs); color: var(--ink-3); margin-top: 8px; }
+.q-err { color: var(--bad); font-size: var(--t-sm); margin-top: 8px; }
+.q-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+.q-foot .btn { min-height: 44px; }
+.q-skel { display: grid; gap: 12px; padding: 10px 0; }
+.q-skel i { height: var(--quota-bar-h); width: 70%; border-radius: var(--r-pill); background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2)); background-size: 200% 100%; animation: q-shimmer 1.4s linear infinite; }
+@keyframes q-shimmer { to { background-position: -200% 0; } }
+@media (max-width: 420px) {
+  .q-win { grid-template-columns: 3.4rem minmax(0, 1fr) 2.8rem; }
+  .q-field { flex-direction: column; }
+  .q-field .btn { width: 100%; }
+  .q-plan { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-skel i { animation: none; opacity: .7; }
+  .q-bar i { transition: none; }
 }
 
 /* ---------- avatars (crew characters) ---------- */

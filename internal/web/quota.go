@@ -26,6 +26,21 @@ type QuotaView struct {
 	Providers   []QuotaProvider `json:"providers,omitempty"`
 }
 
+// MarshalJSON keeps an empty provider list distinct from a card without a token.
+func (view QuotaView) MarshalJSON() ([]byte, error) {
+	if view.State == "ok" {
+		return json.Marshal(struct {
+			State       string          `json:"state"`
+			GeneratedAt string          `json:"generated_at"`
+			Providers   []QuotaProvider `json:"providers"`
+		}{view.State, view.GeneratedAt, view.Providers})
+	}
+	return json.Marshal(struct {
+		State  string `json:"state"`
+		Reason string `json:"reason,omitempty"`
+	}{view.State, view.Reason})
+}
+
 type QuotaProvider struct {
 	Provider      string        `json:"provider"`
 	DisplayName   string        `json:"display_name"`

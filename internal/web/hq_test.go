@@ -300,6 +300,25 @@ func TestHQAssetsAreServedAtHashedPaths(t *testing.T) {
 	}
 }
 
+func TestHQQuotaCardRendersBesideActivityWithIndependentScript(t *testing.T) {
+	app, _ := newHQApp(t)
+	cookie := login(t, app)
+	response := serve(app, authed(http.MethodGet, "/hq", "", cookie))
+	body := response.Body.String()
+	asset := app.assetPath("quota.js")
+	if response.Code != 200 || !strings.HasPrefix(asset, "/static/quota.") ||
+		!strings.Contains(body, `id="quota"`) || !strings.Contains(body, `id="ideas"`) ||
+		!strings.Contains(body, `class="hq-side"`) || !strings.Contains(body, `src="`+asset+`"`) {
+		t.Fatalf("HQ quota card or script missing: status=%d asset=%q", response.Code, asset)
+	}
+	if got := serve(app, httptest.NewRequest(http.MethodGet, asset, nil)); got.Code != 200 || !strings.Contains(got.Body.String(), "/hq/api/quota") {
+		t.Fatalf("quota asset not served independently: %d", got.Code)
+	}
+	if got := serve(app, authed(http.MethodGet, "/hq/api/state", "", cookie)); got.Code != 200 {
+		t.Fatalf("HQ state depends on quota token: %d", got.Code)
+	}
+}
+
 func TestMagicLinkLoginIsSingleUse(t *testing.T) {
 	app, _ := newHQApp(t)
 	cookie := login(t, app)

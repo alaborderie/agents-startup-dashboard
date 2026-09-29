@@ -247,6 +247,24 @@ older status for the same id arrives later.
 The client reconnects with backoff (1 s → 30 s) and, while disconnected, may
 poll `GET /hq/api/state` every 10 s.
 
+### AI quota card
+
+The card below Idea inbox asks for an ai-quota-viewer READ token once. HQ's
+other panels work without it. The browser sends the token only with
+`PUT /hq/api/quota/token`; the server verifies it against ai-quota-viewer's
+`/api/v1/quota`, seals it with a key derived from `DASHBOARD_INGEST_TOKEN`, and
+stores the sealed value under the current HQ session. Subsequent
+`GET /hq/api/quota` calls use the stored token and return a trimmed view of
+Claude, ChatGPT, OpenCode Go and OpenCode Zen. `DELETE /hq/api/quota/token`
+forgets it. The card polls every 60 seconds while visible and never blocks
+HQ state updates. If ai-quota is down, only the card shows an unavailable state.
+
+Signing out or session expiry deletes the stored token. Rotating
+`DASHBOARD_INGEST_TOKEN` makes stored tokens unreadable and the card asks for
+the READ token again. The upstream URL defaults to the in-cluster Service
+`http://ai-quota-viewer.default.svc.cluster.local`; `AI_QUOTA_URL` optionally
+overrides it without adding a required environment variable.
+
 ## 5. Founder subject suggestions (laptop side)
 
 `suggest` commands append `{"id","ts","text","status":"queued","slug":null}` to

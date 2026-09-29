@@ -74,6 +74,7 @@ type hqPageData struct {
 	Authenticated         bool
 	StylesheetPath        string
 	ScriptPath            string
+	QuotaScriptPath       string
 	LiveLogStylesheetPath string
 	LiveLogScriptPath     string
 }
@@ -187,6 +188,7 @@ func (a *App) renderHQ(w http.ResponseWriter, r *http.Request, name string, auth
 		Authenticated:         authenticated,
 		StylesheetPath:        a.assetPath("hq.css"),
 		ScriptPath:            a.assetPath("hq.js"),
+		QuotaScriptPath:       a.assetPath("quota.js"),
 		LiveLogStylesheetPath: a.assetPath("livelog.css"),
 		LiveLogScriptPath:     a.assetPath("livelog.js"),
 	})
