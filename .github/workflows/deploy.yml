@@ -26,6 +26,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Build
         run: go build ./...
 
@@ -34,6 +39,11 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Test quota card
+        run: |
+          node --check internal/web/static/quota.js
+          node --test internal/web/quota_ui_test.cjs
 
   image:
     name: Build & Push Image
