@@ -164,7 +164,14 @@
 
   function render(data) {
     if (!data || data.state === "unavailable") { unavailable(); return; }
-    if (data.state === "needs_token") { prompt(data.reason === "rejected"); return; }
+    if (data.state === "needs_token") {
+      // A timer or tab-return poll must not erase a draft, focus, or rejection
+      // feedback when the server still needs the same token submission.
+      if (!body.querySelector(".q-form") || data.reason === "rejected") {
+        prompt(data.reason === "rejected");
+      }
+      return;
+    }
     if (data.state !== "ok" || !Array.isArray(data.providers)) { unavailable(); return; }
     generatedAt = data.generated_at || "";
     var panel = element("div");
