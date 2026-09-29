@@ -55,6 +55,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load templates: %w", err)
 	}
+	app.SetQuotaURL(config.AIQuotaURL)
 
 	server := &http.Server{
 		Addr:              ":" + config.Port,

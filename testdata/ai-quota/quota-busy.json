@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-09-25T23:10:00Z",
+  "headline": {"age_secs": 120, "display_name": "Claude", "fetched_at": "2026-09-25T23:08:00Z", "freshness": "fresh", "label": "Session", "provider": "claude", "resets_at": "2026-09-26T01:30:00Z", "severity": "critical", "used_percent": 92.0, "window_id": "session"},
+  "next_change_at": "2026-09-25T23:13:00Z",
+  "providers": [
+    {
+      "age_secs": 120,
+      "balance": null,
+      "display_name": "Claude",
+      "fetched_at": "2026-09-25T23:08:00Z",
+      "freshness": "fresh",
+      "last_attempt_at": "2026-09-25T23:08:00Z",
+      "notes": [],
+      "plan": "Max 5x",
+      "provider": "claude",
+      "source": "claude-cli /usage",
+      "spend": [],
+      "status": {"hint": null, "kind": null, "message": null, "state": "ok"},
+      "top_window_id": "session",
+      "windows": [
+        {"duration_secs": 18000, "headline_eligible": true, "id": "session", "kind": "session", "label": "Session", "limited": false, "pace": {"delta": 39.3, "expected_percent": 52.7}, "projected_full_at": "2026-09-25T23:21:44.347Z", "reset_kind": "fixed", "reset_since_fetch": false, "resets_at": "2026-09-26T01:30:00Z", "severity": "critical", "used_percent": 92.0},
+        {"duration_secs": 604800, "headline_eligible": true, "id": "weekly", "kind": "weekly", "label": "Week", "limited": false, "pace": {"delta": 18.9, "expected_percent": 19.1}, "projected_full_at": null, "reset_kind": "fixed", "reset_since_fetch": false, "resets_at": "2026-10-01T14:59:00Z", "severity": "ok", "used_percent": 38.0},
+        {"duration_secs": 604800, "headline_eligible": false, "id": "weekly:fable", "kind": "weekly", "label": "Week · Fable", "limited": false, "pace": {"delta": -19.1, "expected_percent": 19.1}, "projected_full_at": null, "reset_kind": "fixed", "reset_since_fetch": false, "resets_at": "2026-10-01T15:00:00Z", "severity": "ok", "used_percent": 0.0}
+      ]
+    },
+    {
+      "age_secs": 720,
+      "balance": null,
+      "display_name": "ChatGPT",
+      "fetched_at": "2026-09-25T22:58:00Z",
+      "freshness": "fresh",
+      "last_attempt_at": "2026-09-25T23:08:00Z",
+      "notes": ["1 free reset available"],
+      "plan": "Pro",
+      "provider": "codex",
+      "source": "codex app-server",
+      "spend": [],
+      "status": {"hint": "Run `codex login` on jarvis", "kind": "not_logged_in", "message": "Codex is logged out", "state": "error"},
+      "top_window_id": "weekly",
+      "windows": [
+        {"duration_secs": 604800, "headline_eligible": true, "id": "weekly", "kind": "weekly", "label": "Week", "limited": false, "pace": {"delta": 20.2, "expected_percent": 53.8}, "projected_full_at": "2026-09-27T06:42:19.459Z", "reset_kind": "fixed", "reset_since_fetch": false, "resets_at": "2026-09-29T04:38:00Z", "severity": "warn", "used_percent": 74.0}
+      ]
+    },
+    {
+      "age_secs": 10800,
+      "balance": null,
+      "display_name": "OpenCode Go",
+      "fetched_at": "2026-09-25T20:10:00Z",
+      "freshness": "stale",
+      "last_attempt_at": "2026-09-25T20:10:00Z",
+      "notes": [],
+      "plan": "Go",
+      "provider": "opencode_go",
+      "source": "opencode go usage api",
+      "spend": [],
+      "status": {"hint": null, "kind": null, "message": null, "state": "ok"},
+      "top_window_id": "weekly",
+      "windows": [
+        {"duration_secs": 18000, "headline_eligible": true, "id": "session", "kind": "session", "label": "5-hour", "limited": false, "pace": null, "projected_full_at": null, "reset_kind": "sliding", "reset_since_fetch": true, "resets_at": null, "severity": "ok", "used_percent": 0.0},
+        {"duration_secs": 604800, "headline_eligible": true, "id": "weekly", "kind": "weekly", "label": "Week", "limited": false, "pace": null, "projected_full_at": null, "reset_kind": "fixed", "reset_since_fetch": false, "resets_at": "2026-09-28T00:00:00Z", "severity": "ok", "used_percent": 17.0},
+        {"duration_secs": 2592000, "headline_eligible": true, "id": "monthly", "kind": "monthly", "label": "Month", "limited": false, "pace": null, "projected_full_at": null, "reset_kind": "fixed", "reset_since_fetch": false, "resets_at": "2026-10-04T19:55:00Z", "severity": "ok", "used_percent": 14.0}
+      ]
+    },
+    {
+      "age_secs": null,
+      "balance": null,
+      "display_name": "OpenCode Zen",
+      "fetched_at": null,
+      "freshness": "missing",
+      "last_attempt_at": null,
+      "notes": [],
+      "plan": null,
+      "provider": "opencode_zen",
+      "source": null,
+      "spend": [],
+      "status": {"hint": null, "kind": null, "message": null, "state": "ok"},
+      "top_window_id": null,
+      "windows": []
+    }
+  ]
+}

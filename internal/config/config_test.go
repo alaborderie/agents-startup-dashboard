@@ -29,6 +29,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DASHBOARD_INGEST_TOKEN", "fake-test-token")
 	t.Setenv("PORT", "")
 	t.Setenv("PUBLIC_URL", "")
+	t.Setenv("AI_QUOTA_URL", "")
 
 	config, err := Load()
 	if err != nil {
@@ -39,5 +40,13 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if config.PublicURL != "https://agents-startup.antoinelaborderie.com" {
 		t.Fatalf("PublicURL = %q", config.PublicURL)
+	}
+	if config.AIQuotaURL != "http://ai-quota-viewer.default.svc.cluster.local" {
+		t.Fatalf("AIQuotaURL = %q", config.AIQuotaURL)
+	}
+	t.Setenv("AI_QUOTA_URL", "http://quota.internal")
+	config, err = Load()
+	if err != nil || config.AIQuotaURL != "http://quota.internal" {
+		t.Fatalf("override: %+v %v", config, err)
 	}
 }

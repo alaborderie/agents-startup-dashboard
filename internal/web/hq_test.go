@@ -21,13 +21,14 @@ import (
 
 // hqMemory is an in-memory implementation of the HQ half of DataStore.
 type hqMemory struct {
-	mu       sync.Mutex
-	hq       *store.HQState
-	links    map[string]*memoryLink
-	sessions map[string]time.Time
-	commands []*store.Command
-	clients  map[string]string
-	claims   int
+	mu          sync.Mutex
+	hq          *store.HQState
+	links       map[string]*memoryLink
+	sessions    map[string]time.Time
+	quotaTokens map[string][]byte
+	commands    []*store.Command
+	clients     map[string]string
+	claims      int
 }
 
 // postgresText fails like a Postgres text column: it rejects NUL and invalid
@@ -107,6 +108,31 @@ func (m *hqMemory) DeleteSession(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, id)
+	delete(m.quotaTokens, id)
+	return nil
+}
+
+func (m *hqMemory) PutQuotaToken(_ context.Context, id string, sealed []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.quotaTokens == nil {
+		m.quotaTokens = map[string][]byte{}
+	}
+	m.quotaTokens[id] = append([]byte(nil), sealed...)
+	return nil
+}
+
+func (m *hqMemory) QuotaToken(_ context.Context, id string) ([]byte, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sealed, ok := m.quotaTokens[id]
+	return append([]byte(nil), sealed...), ok, nil
+}
+
+func (m *hqMemory) DeleteQuotaToken(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.quotaTokens, id)
 	return nil
 }
 
@@ -271,6 +297,25 @@ func TestHQAssetsAreServedAtHashedPaths(t *testing.T) {
 		if response.Code != http.StatusOK || response.Body.Len() == 0 {
 			t.Fatalf("%s: status %d", name, response.Code)
 		}
+	}
+}
+
+func TestHQQuotaCardRendersBesideActivityWithIndependentScript(t *testing.T) {
+	app, _ := newHQApp(t)
+	cookie := login(t, app)
+	response := serve(app, authed(http.MethodGet, "/hq", "", cookie))
+	body := response.Body.String()
+	asset := app.assetPath("quota.js")
+	if response.Code != 200 || !strings.HasPrefix(asset, "/static/quota.") ||
+		!strings.Contains(body, `id="quota"`) || !strings.Contains(body, `id="ideas"`) ||
+		!strings.Contains(body, `class="hq-side"`) || !strings.Contains(body, `src="`+asset+`"`) {
+		t.Fatalf("HQ quota card or script missing: status=%d asset=%q", response.Code, asset)
+	}
+	if got := serve(app, httptest.NewRequest(http.MethodGet, asset, nil)); got.Code != 200 || !strings.Contains(got.Body.String(), "/hq/api/quota") {
+		t.Fatalf("quota asset not served independently: %d", got.Code)
+	}
+	if got := serve(app, authed(http.MethodGet, "/hq/api/state", "", cookie)); got.Code != 200 {
+		t.Fatalf("HQ state depends on quota token: %d", got.Code)
 	}
 }
 

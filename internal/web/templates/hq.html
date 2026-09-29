@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="{{.LiveLogStylesheetPath}}">
   <script defer src="{{.LiveLogScriptPath}}"></script>
   <script defer src="{{.ScriptPath}}"></script>
+  {{if .Authenticated}}<script defer src="{{.QuotaScriptPath}}"></script>{{end}}
 </head>
 {{if .Authenticated}}
 <body class="hq" data-page="hq">
@@ -76,12 +77,22 @@
       <div class="panel-body" id="activity-body"></div>
     </section>
 
-    <section class="panel panel-ideas" id="ideas" aria-labelledby="ideas-h">
-      <header class="panel-head">
-        <h2 id="ideas-h"><span class="h-glyph" aria-hidden="true"></span>Idea inbox</h2>
-      </header>
-      <div class="panel-body" id="ideas-body"></div>
-    </section>
+    <div class="hq-side">
+      <section class="panel panel-ideas" id="ideas" aria-labelledby="ideas-h">
+        <header class="panel-head">
+          <h2 id="ideas-h"><span class="h-glyph" aria-hidden="true"></span>Idea inbox</h2>
+        </header>
+        <div class="panel-body" id="ideas-body"></div>
+      </section>
+
+      <section class="panel panel-quota" id="quota" aria-labelledby="quota-h">
+        <header class="panel-head">
+          <h2 id="quota-h"><span class="h-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17a8 8 0 1 1 16 0"/><path d="m12 17 4-5"/></svg></span>AI quota</h2>
+          <span class="panel-meta" id="quota-meta"></span>
+        </header>
+        <div class="panel-body" id="quota-body" aria-busy="true"><p class="sr-only">Loading quota</p><div class="q-skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
+      </section>
+    </div>
 
     <section class="panel panel-archive" id="archive" aria-labelledby="archive-h">
       <details class="archive-details" id="archive-details">
