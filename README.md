@@ -240,7 +240,7 @@ entire running set: an empty array clears it.
       "role": "developer",
       "leg": "primary",
       "engine": "opencode",
-      "model": "openai/gpt-6-sol",
+      "model": "openai/gpt-6.1-sol",
       "status": "running",
       "started_at": "2026-09-24T12:00:00+00:00",
       "log_bytes": 56688,
@@ -312,7 +312,7 @@ curl -sS -X POST http://localhost:8080/ingest/live \
   -H 'Content-Type: application/json' \
   --data '{"generated_at":"2026-09-24T12:00:00Z","cycle":151,"tick_running":true,
            "runs":[{"run_id":"demo|2026-09-24T12:00:00Z|developer","slug":"demo",
-           "role":"developer","engine":"opencode","model":"openai/gpt-6-sol",
+           "role":"developer","engine":"opencode","model":"openai/gpt-6.1-sol",
            "status":"running","started_at":"2026-09-24T12:00:00Z","log_tail":"building…"}]}' | jq
 
 # 5. Look at it

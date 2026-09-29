@@ -172,7 +172,7 @@ Response `{"status":"ok"}`.
         "text": "---\nstage: DESIGN …"        // else the current stage's artifact if blocked.
       },                                      // text ≤ 12000 chars, already redacted
       "notes":  [{"ts": "2026-09-27T20:01:00+00:00", "text": "Focus on the export flow"}],   // last 5, newest first
-      "events": [{"ts": "2026-09-27T03:13:07+02:00", "event": "role_done", "detail": "security via opencode/openai/gpt-6-sol rc=0"}],  // last 15, newest first, redacted
+      "events": [{"ts": "2026-09-27T03:13:07+02:00", "event": "role_done", "detail": "security via opencode/openai/gpt-6.1-sol rc=0"}],  // last 15, newest first, redacted
       "suggestion": {"id": "s_…", "text": "…"}   // present when this venture was opened from a founder suggestion, else null
     }
   ],

@@ -601,7 +601,7 @@ func TestLiveJSONServesRunningSetWithServerAge(t *testing.T) {
 		AgeSeconds:  3,
 		Runs: []store.LiveRun{{
 			RunID: "alpha|2026-09-24T12:00:00Z|developer", Slug: "alpha", Role: "developer",
-			Leg: "primary", Engine: "opencode", Model: "gpt-6-sol", Status: "running",
+			Leg: "primary", Engine: "opencode", Model: "gpt-6.1-sol", Status: "running",
 			StartedAt: &started, LogBytes: 2048, LogTail: "hello\n",
 		}},
 	}})
