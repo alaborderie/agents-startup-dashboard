@@ -10,6 +10,7 @@ type Config struct {
 	IngestToken string
 	Port        string
 	PublicURL   string
+	AIQuotaURL  string
 }
 
 func Load() (Config, error) {
@@ -18,6 +19,7 @@ func Load() (Config, error) {
 		IngestToken: os.Getenv("DASHBOARD_INGEST_TOKEN"),
 		Port:        os.Getenv("PORT"),
 		PublicURL:   os.Getenv("PUBLIC_URL"),
+		AIQuotaURL:  os.Getenv("AI_QUOTA_URL"),
 	}
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
@@ -30,6 +32,9 @@ func Load() (Config, error) {
 	}
 	if config.PublicURL == "" {
 		config.PublicURL = "https://agents-startup.antoinelaborderie.com"
+	}
+	if config.AIQuotaURL == "" {
+		config.AIQuotaURL = "http://ai-quota-viewer.default.svc.cluster.local"
 	}
 	return config, nil
 }

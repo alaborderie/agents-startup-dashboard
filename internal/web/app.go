@@ -41,6 +41,9 @@ type DataStore interface {
 	CreateSession(context.Context, string, time.Time, string) error
 	ValidSession(context.Context, string) (bool, error)
 	DeleteSession(context.Context, string) error
+	PutQuotaToken(context.Context, string, []byte) error
+	QuotaToken(context.Context, string) ([]byte, bool, error)
+	DeleteQuotaToken(context.Context, string) error
 	CreateCommand(context.Context, store.NewCommand) (store.Command, bool, error)
 	ClaimCommands(context.Context, time.Duration, int) ([]store.Command, error)
 	FinishCommand(context.Context, string, string, string) (store.Command, bool, bool, error)
@@ -62,7 +65,10 @@ type App struct {
 	hub         *hub
 	now         func() time.Time
 	// wsPing is how often an HQ socket is pinged and its session re-checked.
-	wsPing time.Duration
+	wsPing      time.Duration
+	quotaKey    []byte
+	quotaURL    string
+	quotaClient *http.Client
 }
 
 func contentHashPath(name, extension string, body []byte) string {
@@ -101,6 +107,9 @@ func New(dataStore DataStore, ingestToken string) (*App, error) {
 		wsPing:      wsPingInterval,
 	}
 	app.hub = newHub(func() time.Time { return app.now() })
+	if err := app.initQuota(ingestToken); err != nil {
+		return nil, err
+	}
 	return app, nil
 }
 
@@ -136,6 +145,9 @@ func (a *App) Handler() http.Handler {
 	hq.HandleFunc("POST /hq/login", a.hqLogin)
 	hq.HandleFunc("POST /hq/logout", a.hqLogout)
 	hq.HandleFunc("GET /hq/api/state", a.requireSession(a.hqStateJSON))
+	hq.HandleFunc("GET /hq/api/quota", a.hqQuota)
+	hq.HandleFunc("PUT /hq/api/quota/token", a.hqQuotaToken)
+	hq.HandleFunc("DELETE /hq/api/quota/token", a.hqForgetQuotaToken)
 	hq.HandleFunc("POST /hq/api/commands", a.requireSession(a.hqCommand))
 	hq.HandleFunc("GET /hq/ws", a.hqWebSocket)
 	protected := http.NewCrossOriginProtection().Handler(hq)
