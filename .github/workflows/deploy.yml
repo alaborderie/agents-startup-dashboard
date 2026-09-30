@@ -13,7 +13,7 @@ env:
 jobs:
   ci:
     name: Build, Vet & Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, jarvis]
     permissions:
       contents: read
 
@@ -48,7 +48,7 @@ jobs:
   image:
     name: Build & Push Image
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, jarvis]
     permissions:
       contents: read
       packages: write
@@ -83,7 +83,7 @@ jobs:
     name: Deploy to k3s
     if: github.event_name != 'pull_request'
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, jarvis]
 
     steps:
       - name: Restart dashboard deployment
