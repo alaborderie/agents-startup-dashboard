@@ -45,6 +45,11 @@ jobs:
           node --check internal/web/static/quota.js
           node --test internal/web/quota_ui_test.cjs
 
+      - name: Test HQ crew
+        run: |
+          node --check internal/web/static/hq.js
+          node --test internal/web/hq_ui_test.cjs
+
   image:
     name: Build & Push Image
     needs: ci

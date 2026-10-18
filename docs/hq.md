@@ -141,8 +141,9 @@ Response `{"status":"ok"}`.
     "next": "2026-09-27T21:00:58+00:00"           // systemd timer next trigger, may be null
   },
   "roles": [
-    {"role": "inventor",  "tier": "research", "engine": "opencode", "model": "opencode-go/deepseek-v4.1-flash", "effort": "medium"},
-    {"role": "designer",  "tier": "claude",   "engine": "claude",   "model": "claude-opus-5-5", "effort": ""}
+    {"role": "inventor", "tier": "research", "working": false, "engine": null, "model": null, "effort": null, "models": []},
+    {"role": "designer", "tier": "claude", "working": true, "engine": "claude", "model": "claude-opus-5-5", "effort": null,
+     "models": [{"engine": "claude", "model": "claude-opus-5-5", "effort": null}]}
   ],
   "ventures": [
     {
@@ -189,6 +190,11 @@ Response `{"status":"ok"}`.
 `hq.ventures` holds every venture whose stage is not `KILLED`/`ARCHIVED`, plus
 terminal ones with any event in the last 72 h. The public `ventures` list (below)
 remains the complete archive, including abandoned reasons.
+
+Role models describe current runs, never a configured default or the last run.
+The crew renders model chips from each fresh live run only; resting tiles and
+tiles whose live signal is stale carry no model chip, including when an older
+producer still sends a configured model in `hq.roles`.
 
 ## 4. Browser read side
 

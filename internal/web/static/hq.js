@@ -1346,7 +1346,7 @@
     rs.forEach(function (r) { working[r.role] = true; });
     var idle = roles.filter(function (r) { return !working[r.role]; });
     $("crew-meta").textContent = rs.length ? rs.length + " working · " + idle.length + " resting" : "Everyone's resting";
-    var sig = JSON.stringify([stale, roles.map(function (r) { return [r.role, r.model, r.engine]; }),
+    var sig = JSON.stringify([stale, roles.map(function (r) { return r.role; }),
       rs.map(function (r) { return [r.run_id, r.role, r.slug, r.leg, r.engine, r.model, r.started_at, titleOf(r.slug)]; })]);
     patch($("crew-body"), "crew", sig, function () {
       var grid = h("div", { class: "crew-grid" });
@@ -1362,7 +1362,7 @@
           h("span", { class: "crew-venture", text: title }),
           h("span", { class: "crew-meta" },
             h("span", { class: "elapsed", "data-since": str(r.started_at), text: isFinite(tms(r.started_at)) ? dur((now() - tms(r.started_at)) / 1000) : "" }),
-            r.model ? h("span", { class: "chip mono", title: str(r.engine) + " · " + str(r.model), text: shortModel(r.model) }) : null,
+            !stale && r.model ? h("span", { class: "chip mono", title: str(r.engine) + " · " + str(r.model), text: shortModel(r.model) }) : null,
             r.leg ? h("span", { class: "chip" + (r.leg === "fallback" ? " chip-leg-fallback" : ""), text: str(r.leg) }) : null),
           stale ? h("span", { class: "crew-stale-note", text: "signal lost · last seen " + ago(liveAge()) })
             : h("span", { class: "crew-cta" }, icon("log"), "Live log"));
@@ -1374,8 +1374,7 @@
         var tile = h("div", { class: "crew-tile", role: "group", "aria-label": roleName(r.role) + " is resting" },
           avatar(r.role, "lg"),
           h("span", { class: "crew-name", text: roleName(r.role) }),
-          h("span", { class: "crew-tag", text: ART[k].tag }),
-          r.model ? h("span", { class: "chip mono crew-model", title: str(r.engine) + " · " + str(r.model), text: shortModel(r.model) }) : null);
+          h("span", { class: "crew-tag", text: ART[k].tag }));
         roleClass(tile, r.role);
         grid.appendChild(tile);
       });
