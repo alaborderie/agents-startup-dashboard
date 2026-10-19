@@ -164,3 +164,19 @@ test("observation readings disappear at their deadline even without a new poll",
   assert.deepEqual(texts(xai.querySelector(".q-fresh")), ["expired"]);
   assert.ok(claude.querySelector(".q-bar"), "legacy windows have no deadline");
 });
+
+test("a collection failure stays visible after the last good reading expires", async () => {
+  const ui = await card();
+  ui.reply({ state: "ok", generated_at: "2026-10-19T12:00:00Z", providers: [
+    { provider: "cursor", display_name: "Cursor", freshness: "fresh", status_state: "ok", readings: [],
+      status_message: "Last good reading; latest attempt: Authentication failed",
+      expired_message: "Last reading expired · Latest attempt: Authentication failed",
+      windows: [{ id: "weekly", label: "Week", used_percent: 30, severity: "ok", limited: false, expires_at: "2026-10-19T12:10:00Z" }] }
+  ] });
+  await ui.poll();
+  assert.deepEqual(texts(ui.body.querySelector(".q-help")), ["Last good reading; latest attempt: Authentication failed"]);
+  ui.clock.now = Date.parse("2026-10-19T12:10:00Z");
+  ui.tick();
+  assert.equal(ui.body.querySelector(".q-bar"), null);
+  assert.deepEqual(texts(ui.body.querySelector(".q-note")), ["Last reading expired · Latest attempt: Authentication failed"]);
+});

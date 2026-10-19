@@ -29,9 +29,11 @@ func TestQuotaObservationsFixture(t *testing.T) {
 		{Provider: "cursor", DisplayName: "Cursor", Freshness: "missing", StatusState: "unknown",
 			StatusMessage: "No supported personal quota collector", Windows: []QuotaWindow{}, Readings: []QuotaReading{}},
 		{Provider: "xai_api", DisplayName: "xAI API", Freshness: "fresh", StatusState: "ok", Windows: []QuotaWindow{},
-			Readings: []QuotaReading{{ID: "prepaid-ledger-total", Label: "Ledger balance", Value: "−$10.00", ExpiresAt: "2026-10-18T12:30:00Z"}}},
+			Readings:       []QuotaReading{{ID: "prepaid-ledger-total", Label: "Ledger balance", Value: "−$10.00", ExpiresAt: "2026-10-18T12:30:00Z"}},
+			ExpiredMessage: "Last reading expired"},
 		{Provider: "github_copilot", DisplayName: "GitHub Copilot", Freshness: "fresh", StatusState: "ok", Windows: []QuotaWindow{},
-			Readings: []QuotaReading{{ID: "monthly-gross-ai-credit", Label: "Gross reported · Month", Value: "12.5 AI credits", ExpiresAt: "2026-10-18T12:30:00Z"}}},
+			Readings:       []QuotaReading{{ID: "monthly-gross-ai-credit", Label: "Gross reported · Month", Value: "12.5 AI credits", ExpiresAt: "2026-10-18T12:30:00Z"}},
+			ExpiredMessage: "Last reading expired"},
 	}
 	if !reflect.DeepEqual(view.Providers, want) {
 		t.Fatalf("providers = %+v", view.Providers)
@@ -58,15 +60,16 @@ func observationQuota(schemaVersion int, accesses ...string) []byte {
 func observationAccessJSON(accessID, product, attempt, limits, freshness string) string {
 	observation := "null"
 	if limits != "" {
-		observation = `{"limits":[` + limits + `]}`
+		observation = `{"observation_id":"20000000-0000-4000-8000-000000000001","limits":[` + limits + `]}`
 	}
 	return `{"access_id":"` + accessID + `","configuration_revision":1,"product_id":"` + product + `","bindings":[],
 		"streams":[{"source_id":"s","latest_attempt":` + attempt + `,"last_observation":` + observation + `,
 		"freshness":[` + freshness + `]}]}`
 }
 
-const okAttempt = `{"status":"ok","reason":null,"observation_id":"20000000-0000-4000-8000-000000000001"}`
-const timeoutAttempt = `{"status":"error","reason":"timeout","observation_id":null}`
+const attemptHead = `{"attempt_id":"10000000-0000-4000-8000-000000000001","collected_at":"2026-10-19T11:55:00Z",`
+const okAttempt = attemptHead + `"status":"ok","reason":null,"observation_id":"20000000-0000-4000-8000-000000000001"}`
+const timeoutAttempt = attemptHead + `"status":"error","reason":"timeout","observation_id":null}`
 
 // limitJSON is a known, measured limit valid until 2026-10-21, with fields overridden.
 func limitJSON(fields map[string]any) string {
@@ -107,10 +110,10 @@ func TestQuotaObservationsShowOnlyFreshValidReadings(t *testing.T) {
 	}{
 		{"cursor percent becomes a meter", cursor(okAttempt, map[string]any{"used": "72.5"}, "fresh"),
 			QuotaProvider{Provider: "cursor", DisplayName: "Cursor", Freshness: "fresh", StatusState: "ok", Readings: []QuotaReading{},
-				Windows: meter(72.5, "warn", false)}},
+				Windows: meter(72.5, "warn", false), ExpiredMessage: "Last reading expired"}},
 		{"provider-reported exhaustion is limited", cursor(okAttempt, map[string]any{"used": "40", "exhausted": true}, "fresh"),
 			QuotaProvider{Provider: "cursor", DisplayName: "Cursor", Freshness: "fresh", StatusState: "ok", Readings: []QuotaReading{},
-				Windows: meter(40, "limited", true)}},
+				Windows: meter(40, "limited", true), ExpiredMessage: "Last reading expired"}},
 		{"server-expired reading is hidden", cursor(okAttempt, map[string]any{"used": "12"}, "expired"),
 			hidden("cursor", "Cursor", "expired", "ok", "Last reading expired")},
 		{"reading without a validity deadline is hidden", cursor(okAttempt, map[string]any{"used": "12", "valid_until": nil}, "fresh"),
@@ -120,7 +123,8 @@ func TestQuotaObservationsShowOnlyFreshValidReadings(t *testing.T) {
 			hidden("cursor", "Cursor", "expired", "ok", "Last reading expired")},
 		{"failed attempt keeps a still-fresh reading as the last good one", cursor(timeoutAttempt, map[string]any{"used": "95"}, "fresh"),
 			QuotaProvider{Provider: "cursor", DisplayName: "Cursor", Freshness: "fresh", StatusState: "ok", Readings: []QuotaReading{},
-				StatusMessage: "Last good reading; latest attempt: Timed out", Windows: meter(95, "critical", false)}},
+				StatusMessage: "Last good reading; latest attempt: Timed out", Windows: meter(95, "critical", false),
+				ExpiredMessage: "Last reading expired · Latest attempt: Timed out"}},
 		{"failed attempt with only an unknown limit is an error", cursor(timeoutAttempt, map[string]any{"unit": nil,
 			"status": "unknown", "reason": "incomplete_report", "quality": "unknown", "valid_until": nil}, "unknown"),
 			hidden("cursor", "Cursor", "missing", "error", "Incomplete report · Timed out")},
@@ -130,13 +134,34 @@ func TestQuotaObservationsShowOnlyFreshValidReadings(t *testing.T) {
 			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
 		{"validity past the reset is not shown", cursor(okAttempt, map[string]any{"used": "1", "valid_until": "2026-10-23T00:00:00Z"}, "fresh"),
 			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
-		{"malformed attempt reads as a format error", cursor(`{"status":"later","reason":null,"observation_id":null}`,
+		{"malformed attempt hides the stream's values", cursor(attemptHead+`"status":"later","reason":null,"observation_id":null}`,
 			map[string]any{"used": "12"}, "fresh"),
-			QuotaProvider{Provider: "cursor", DisplayName: "Cursor", Freshness: "fresh", StatusState: "ok", Readings: []QuotaReading{},
-				StatusMessage: "Last good reading; latest attempt: Unexpected response format", Windows: meter(12, "ok", false)}},
-		{"ok attempt without an observation is malformed", observationAccessJSON("cursor-x", "cursor",
-			`{"status":"ok","reason":null,"observation_id":null}`, "", ""),
 			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"attempt with an empty observation id hides the stream's values", cursor(attemptHead+`"status":"ok","reason":null,"observation_id":""}`,
+			map[string]any{"used": "12"}, "fresh"),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"attempt without an attempt id hides the stream's values", cursor(`{"collected_at":"2026-10-19T11:55:00Z","status":"ok","reason":null,
+			"observation_id":"20000000-0000-4000-8000-000000000001"}`, map[string]any{"used": "12"}, "fresh"),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"ok attempt without an observation is malformed", observationAccessJSON("cursor-x", "cursor",
+			attemptHead+`"status":"ok","reason":null,"observation_id":null}`, "", ""),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"unknown attempt reason reads as a format error", observationAccessJSON("cursor-x", "cursor",
+			attemptHead+`"status":"error","reason":"future_reason","observation_id":null}`, "", ""),
+			hidden("cursor", "Cursor", "missing", "error", "Unexpected response format")},
+		{"known limit with an unknown reason is not shown", cursor(okAttempt, map[string]any{"used": "12", "reason": "future_reason"}, "fresh"),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"one malformed limit hides the whole reading", observationAccessJSON("cursor-x", "cursor", okAttempt,
+			limitJSON(map[string]any{"used": "12"})+","+limitJSON(map[string]any{"limit_id": "other", "used": "-1"}),
+			freshness("weekly", "fresh")+","+freshness("other", "fresh")),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"duplicate limits hide the whole reading", observationAccessJSON("cursor-x", "cursor", okAttempt,
+			limitJSON(map[string]any{"used": "12"})+","+limitJSON(map[string]any{"used": "13"}), freshness("weekly", "fresh")),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"unknown freshness state hides the reading", cursor(okAttempt, map[string]any{"used": "12"}, "later"),
+			hidden("cursor", "Cursor", "missing", "unknown", "Unexpected response format")},
+		{"unreadable retained reading keeps the collection failure", cursor(timeoutAttempt, map[string]any{"used": "-1"}, "fresh"),
+			hidden("cursor", "Cursor", "missing", "error", "Unexpected response format · Timed out")},
 		{"non-canonical amount is not shown", observationAccessJSON("xai", "xai_api", okAttempt,
 			limitJSON(map[string]any{"limit_id": "ledger", "metric_kind": "balance", "window": map[string]any{"kind": "none"},
 				"unit": "usd_cent", "remaining": "1e3", "reset_at": nil}), freshness("ledger", "fresh")),
@@ -145,12 +170,14 @@ func TestQuotaObservationsShowOnlyFreshValidReadings(t *testing.T) {
 			limitJSON(map[string]any{"limit_id": "ledger", "metric_kind": "balance", "window": map[string]any{"kind": "none"},
 				"unit": "usd_cent", "remaining": "250", "reset_at": nil, "quality": "estimated"}), freshness("ledger", "fresh")),
 			QuotaProvider{Provider: "xai_api", DisplayName: "xAI API", Freshness: "fresh", StatusState: "ok", Windows: []QuotaWindow{},
-				Readings: []QuotaReading{{ID: "ledger", Label: "Ledger balance", Value: "$2.50 (est.)", ExpiresAt: expires}}}},
+				Readings:       []QuotaReading{{ID: "ledger", Label: "Ledger balance", Value: "$2.50 (est.)", ExpiresAt: expires}},
+				ExpiredMessage: "Last reading expired"}},
 		{"premium requests keep their unit", observationAccessJSON("copilot", "github_copilot", okAttempt,
 			limitJSON(map[string]any{"limit_id": "monthly", "metric_kind": "usage_report", "window": map[string]any{"kind": "monthly"},
 				"unit": "premium_request", "used": "1", "reset_at": nil}), freshness("monthly", "fresh")),
 			QuotaProvider{Provider: "github_copilot", DisplayName: "GitHub Copilot", Freshness: "fresh", StatusState: "ok", Windows: []QuotaWindow{},
-				Readings: []QuotaReading{{ID: "monthly", Label: "Gross reported · Month", Value: "1 premium request", ExpiresAt: expires}}}},
+				Readings:       []QuotaReading{{ID: "monthly", Label: "Gross reported · Month", Value: "1 premium request", ExpiresAt: expires}},
+				ExpiredMessage: "Last reading expired"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view, err := decodeQuota(observationQuota(1, tc.access), observationNow)
@@ -173,7 +200,7 @@ func TestQuotaObservationsAreIsolatedFromLegacyCards(t *testing.T) {
 	if err := json.Unmarshal(legacy, &doc); err != nil {
 		t.Fatal(err)
 	}
-	copilot := observationAccessJSON("copilot", "github_copilot", `{"status":"unknown","reason":"billing_regime_unverified","observation_id":null}`, "", "")
+	copilot := observationAccessJSON("copilot", "github_copilot", attemptHead+`"status":"unknown","reason":"billing_regime_unverified","observation_id":null}`, "", "")
 	for _, tc := range []struct {
 		name         string
 		observations string

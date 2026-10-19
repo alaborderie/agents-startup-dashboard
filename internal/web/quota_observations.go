@@ -73,25 +73,40 @@ type observationLimit struct {
 }
 
 type observationAttempt struct {
+	AttemptID     string  `json:"attempt_id"`
+	CollectedAt   string  `json:"collected_at"`
 	Status        string  `json:"status"`
-	Reason        string  `json:"reason"`
+	Reason        *string `json:"reason"`
 	ObservationID *string `json:"observation_id"`
 }
 
-type observationAccess struct {
-	AccessID  string `json:"access_id"`
-	ProductID string `json:"product_id"`
-	Streams   []struct {
-		LatestAttempt   observationAttempt `json:"latest_attempt"`
-		LastObservation *struct {
-			Limits []observationLimit `json:"limits"`
-		} `json:"last_observation"`
-		Freshness []struct {
-			LimitID string `json:"limit_id"`
-			State   string `json:"state"`
-		} `json:"freshness"`
-	} `json:"streams"`
+type observationStream struct {
+	SourceID        string             `json:"source_id"`
+	LatestAttempt   observationAttempt `json:"latest_attempt"`
+	LastObservation *struct {
+		ObservationID string             `json:"observation_id"`
+		Limits        []observationLimit `json:"limits"`
+	} `json:"last_observation"`
+	Freshness []struct {
+		LimitID string `json:"limit_id"`
+		State   string `json:"state"`
+	} `json:"freshness"`
 }
+
+type observationAccess struct {
+	AccessID  string            `json:"access_id"`
+	ProductID string            `json:"product_id"`
+	Streams   []json.RawMessage `json:"streams"`
+}
+
+// Upstream caps, applied the same way its own clients apply them.
+const (
+	maxObservationAccesses = 16
+	maxObservationStreams  = 4
+	maxObservationLimits   = 32
+)
+
+var observationUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // decodeObservations reads the optional observations block one access at a
 // time: a missing, malformed or unknown-version block, or a malformed access,
@@ -103,6 +118,9 @@ func decodeObservations(raw json.RawMessage, now time.Time) []QuotaProvider {
 	}
 	if len(raw) == 0 || json.Unmarshal(raw, &block) != nil || block.SchemaVersion != 1 {
 		return nil
+	}
+	if len(block.Accesses) > maxObservationAccesses {
+		block.Accesses = block.Accesses[:maxObservationAccesses]
 	}
 	byProduct := map[string][]observationAccess{}
 	for _, item := range block.Accesses {
@@ -144,13 +162,40 @@ func observationProvider(name string, access observationAccess, now time.Time) Q
 		}
 		notes = append(notes, text)
 	}
+	// expiredNotes replace notes in the browser once every shown reading has
+	// lapsed, so a collection failure stays visible without "last good" wording.
+	expiredNotes := []string{"Last reading expired"}
+	both := func(text string) {
+		note(text)
+		for _, seen := range expiredNotes {
+			if seen == text {
+				return
+			}
+		}
+		expiredNotes = append(expiredNotes, text)
+	}
 	failed, expired := false, false
-	for _, stream := range access.Streams {
-		attempt := stream.LatestAttempt
-		if !validAttempt(attempt) {
-			attempt = observationAttempt{Status: "unknown", Reason: "schema_mismatch"}
+	streams := access.Streams
+	if len(streams) > maxObservationStreams {
+		streams = streams[:maxObservationStreams]
+	}
+	for _, raw := range streams {
+		var stream observationStream
+		if json.Unmarshal(raw, &stream) != nil || !observationID.MatchString(stream.SourceID) {
+			continue
+		}
+		attempt, attemptOK := readAttempt(stream.LatestAttempt)
+		if !attemptOK {
+			// An unreadable attempt makes the whole stream unknown, never a reading.
+			both(reasonText("schema_mismatch"))
+			continue
 		}
 		failed = failed || attempt.Status == "error"
+		if stream.LastObservation != nil && !validObservation(stream) {
+			// An invalid historical reading must not erase a valid collection failure.
+			both(reasonText("schema_mismatch"))
+			stream.LastObservation = nil
+		}
 		shown := 0
 		if stream.LastObservation != nil {
 			fresh := map[string]bool{}
@@ -159,26 +204,25 @@ func observationProvider(name string, access observationAccess, now time.Time) Q
 			}
 			for _, limit := range stream.LastObservation.Limits {
 				switch {
-				case !validLimit(limit):
-					note(reasonText("schema_mismatch"))
 				case limit.Status != "known":
-					note(reasonText(limit.Reason))
+					both(reasonText(limit.Reason))
 				case !fresh[limit.LimitID] || !current(limit, now):
 					expired = true
 					note("Last reading expired")
 				case addObservationLimit(&provider, access.ProductID, limit):
 					shown++
 				default:
-					note(reasonText("schema_mismatch"))
+					both(reasonText("schema_mismatch"))
 				}
 			}
 		}
 		switch {
 		case attempt.Status == "ok":
 		case shown > 0:
-			note("Last good reading; latest attempt: " + reasonText(attempt.Reason))
+			note("Last good reading; latest attempt: " + reasonText(*attempt.Reason))
+			expiredNotes = append(expiredNotes, "Latest attempt: "+reasonText(*attempt.Reason))
 		default:
-			note(reasonText(attempt.Reason))
+			both(reasonText(*attempt.Reason))
 		}
 	}
 	switch {
@@ -195,17 +239,56 @@ func observationProvider(name string, access observationAccess, now time.Time) Q
 		notes = []string{"No reading yet"}
 	}
 	provider.StatusMessage = strings.Join(notes, " · ")
+	if len(provider.Windows) > 0 || len(provider.Readings) > 0 {
+		provider.ExpiredMessage = strings.Join(expiredNotes, " · ")
+	}
 	return provider
 }
 
-func validAttempt(attempt observationAttempt) bool {
+// readAttempt validates an attempt as upstream does. A reason this version
+// does not know reads as a format error rather than failing the attempt.
+func readAttempt(attempt observationAttempt) (observationAttempt, bool) {
+	if !observationUUID.MatchString(attempt.AttemptID) || parseTime(attempt.CollectedAt).IsZero() ||
+		attempt.ObservationID != nil && !observationUUID.MatchString(*attempt.ObservationID) {
+		return attempt, false
+	}
+	if attempt.Reason != nil {
+		if _, known := observationReasons[*attempt.Reason]; !known {
+			mismatch := "schema_mismatch"
+			attempt.Reason = &mismatch
+		}
+	}
 	switch attempt.Status {
 	case "ok":
-		return attempt.Reason == "" && attempt.ObservationID != nil
+		return attempt, attempt.Reason == nil && attempt.ObservationID != nil
 	case "unknown", "error":
-		return attempt.Reason != "" && attempt.ObservationID == nil
+		return attempt, attempt.Reason != nil && attempt.ObservationID == nil
 	}
-	return false
+	return attempt, false
+}
+
+// validObservation rejects a reading as a whole, as upstream does, when any
+// of its limits or freshness entries is malformed.
+func validObservation(stream observationStream) bool {
+	observation := stream.LastObservation
+	if !observationUUID.MatchString(observation.ObservationID) || len(observation.Limits) > maxObservationLimits {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, limit := range observation.Limits {
+		if !validLimit(limit) || seen[limit.LimitID] {
+			return false
+		}
+		seen[limit.LimitID] = true
+	}
+	for _, item := range stream.Freshness {
+		switch item.State {
+		case "fresh", "expired", "unknown":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validLimit applies the contract's per-limit rules, as ai-quota's own web
@@ -216,6 +299,9 @@ func validLimit(limit observationLimit) bool {
 		return false
 	}
 	if _, ok := windowLabels[limit.Window.Kind]; !ok {
+		return false
+	}
+	if _, ok := observationReasons[limit.Reason]; limit.Reason != "" && !ok {
 		return false
 	}
 	numbers := []*string{limit.Used, limit.Limit, limit.Remaining}

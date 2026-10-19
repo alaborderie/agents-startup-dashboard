@@ -54,6 +54,8 @@ type QuotaProvider struct {
 	// Readings are native-unit amounts from observations, such as a ledger
 	// balance or a billing report; they are never percentages of a quota.
 	Readings []QuotaReading `json:"readings,omitempty"`
+	// ExpiredMessage replaces StatusMessage once every reading has expired.
+	ExpiredMessage string `json:"expired_message,omitempty"`
 }
 
 type QuotaReading struct {

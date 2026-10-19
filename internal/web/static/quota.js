@@ -167,7 +167,7 @@
     heading.append(element("span", "q-fresh" + (stale ? " stale" : ""), lapsed ? "expired" : provider.status_state !== "ok" ? provider.status_state || "unavailable" : provider.freshness || "missing"));
     section.append(heading);
     if (stale) {
-      section.append(element("p", "q-note", lapsed ? "Last reading expired." : provider.status_message || "Quota " + (provider.freshness || "unavailable") + "."));
+      section.append(element("p", "q-note", lapsed ? provider.expired_message || "Last reading expired." : provider.status_message || "Quota " + (provider.freshness || "unavailable") + "."));
     } else if (windows.length || readings.length) {
       windows.forEach(function (windowData) { section.append(windowRow(provider, windowData)); });
       readings.forEach(function (reading) {
