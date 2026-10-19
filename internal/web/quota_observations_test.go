@@ -60,7 +60,10 @@ func observationQuota(schemaVersion int, accesses ...string) []byte {
 func observationAccessJSON(accessID, product, attempt, limits, freshness string) string {
 	observation := "null"
 	if limits != "" {
-		observation = `{"observation_id":"20000000-0000-4000-8000-000000000001","limits":[` + limits + `]}`
+		observation = `{"observation_id":"20000000-0000-4000-8000-000000000001","configuration_revision":1,
+			"collected_at":"2026-10-19T11:55:00Z","provider_observed_at":null,"coverage_through":null,"coverage_status":"unknown",
+			"reporting_lag":"unknown","max_reporting_lag_secs":null,"source":{"kind":"public_api","reference":"test"},
+			"limits":[` + limits + `]}`
 	}
 	return `{"access_id":"` + accessID + `","configuration_revision":1,"product_id":"` + product + `","bindings":[],
 		"streams":[{"source_id":"s","latest_attempt":` + attempt + `,"last_observation":` + observation + `,
@@ -74,8 +77,11 @@ const timeoutAttempt = attemptHead + `"status":"error","reason":"timeout","obser
 // limitJSON is a known, measured limit valid until 2026-10-21, with fields overridden.
 func limitJSON(fields map[string]any) string {
 	limit := map[string]any{
-		"limit_id": "weekly", "metric_kind": "allowance", "window": map[string]any{"kind": "weekly"},
-		"unit": "percent", "used": nil, "limit": nil, "remaining": nil, "exhausted": nil,
+		"limit_id": "weekly", "metric_kind": "allowance",
+		"applies_to":      map[string]any{"status": "unknown", "bindings": []any{}},
+		"pool_membership": map[string]any{"status": "unknown", "pool_id": nil, "evidence": nil},
+		"window":          map[string]any{"kind": "weekly", "period_id": nil, "start_at": nil, "end_at": nil},
+		"unit":            "percent", "used": nil, "limit": nil, "remaining": nil, "exhausted": nil,
 		"reset_at": "2026-10-22T00:00:00Z", "valid_until": "2026-10-21T00:00:00Z",
 		"status": "known", "reason": nil, "quality": "measured",
 	}
@@ -300,5 +306,70 @@ func TestFormatNativeAmountIsExact(t *testing.T) {
 		if got, ok := formatNativeAmount(value, "usd"); ok {
 			t.Errorf("formatNativeAmount(%q) accepted as %q", value, got)
 		}
+	}
+}
+
+// TestQuotaObservationsFixtureMutations breaks one field of the upstream
+// fixture's Copilot stream at a time; none may show the 12.5 credits.
+func TestQuotaObservationsFixtureMutations(t *testing.T) {
+	fixture, err := os.ReadFile("../../testdata/ai-quota/quota-observations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureNow := time.Date(2026, 10, 18, 12, 5, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		mutate  func(stream, observation, limit map[string]any)
+		message string
+	}{
+		{"empty limit reason", func(_, _, limit map[string]any) { limit["reason"] = "" }, "Unexpected response format"},
+		{"invalid observation time", func(_, observation, _ map[string]any) { observation["collected_at"] = "2026-02-30T00:00:00Z" },
+			"Unexpected response format"},
+		{"provider time after collection", func(_, observation, _ map[string]any) {
+			observation["provider_observed_at"] = "2026-10-18T12:01:00Z"
+		}, "Unexpected response format"},
+		{"complete coverage without a time", func(_, observation, _ map[string]any) { observation["coverage_status"] = "complete_through" },
+			"Unexpected response format"},
+		{"bounded lag without a bound", func(_, observation, _ map[string]any) { observation["reporting_lag"] = "bounded" },
+			"Unexpected response format"},
+		{"unknown source kind", func(_, observation, _ map[string]any) { observation["source"].(map[string]any)["kind"] = "scraped" },
+			"Unexpected response format"},
+		{"reversed window bounds", func(_, _, limit map[string]any) {
+			window := limit["window"].(map[string]any)
+			window["start_at"], window["end_at"] = window["end_at"], window["start_at"]
+		}, "Unexpected response format"},
+		{"verified scope without bindings", func(_, _, limit map[string]any) { limit["applies_to"].(map[string]any)["status"] = "verified" },
+			"Unexpected response format"},
+		{"verified pool without evidence", func(_, _, limit map[string]any) {
+			pool := limit["pool_membership"].(map[string]any)
+			pool["status"], pool["pool_id"] = "verified", "shared"
+		}, "Unexpected response format"},
+		{"numeric amount", func(_, _, limit map[string]any) { limit["used"] = 12.5 }, "Unexpected response format"},
+		{"missing freshness", func(stream, _, _ map[string]any) { delete(stream, "freshness") }, "Unexpected response format"},
+		{"numeric amount keeps a valid failure", func(stream, _, limit map[string]any) {
+			limit["used"] = 12.5
+			stream["latest_attempt"] = map[string]any{"attempt_id": "10000000-0000-4000-8000-000000000009",
+				"collected_at": "2026-10-18T12:04:00Z", "status": "error", "reason": "auth_failed", "observation_id": nil}
+		}, "Unexpected response format · Authentication failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var doc map[string]any
+			if err := json.Unmarshal(fixture, &doc); err != nil {
+				t.Fatal(err)
+			}
+			access := doc["observations"].(map[string]any)["accesses"].([]any)[0].(map[string]any)
+			stream := access["streams"].([]any)[0].(map[string]any)
+			observation := stream["last_observation"].(map[string]any)
+			tc.mutate(stream, observation, observation["limits"].([]any)[0].(map[string]any))
+			data, _ := json.Marshal(doc)
+			view, err := decodeQuota(data, fixtureNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			copilot := view.Providers[len(view.Providers)-1]
+			if copilot.Provider != "github_copilot" || len(copilot.Readings) != 0 || copilot.StatusMessage != tc.message {
+				t.Fatalf("copilot = %+v", copilot)
+			}
+		})
 	}
 }
