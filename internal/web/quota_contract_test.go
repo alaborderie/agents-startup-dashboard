@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestQuotaContractFixtures(t *testing.T) {
@@ -22,7 +23,7 @@ func TestQuotaContractFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			view, err := decodeQuota(data)
+			view, err := decodeQuota(data, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,7 +75,7 @@ func TestQuotaContractIgnoresUnknownProvidersAndNormalizesSeverity(t *testing.T)
 	providers[1]["windows"] = json.RawMessage(`[ {"id":"weekly","label":"Week","headline_eligible":true,"used_percent":72,"severity":"mystery","resets_at":"2026-10-01T12:00:00Z"} ]`)
 	doc["providers"], _ = json.Marshal(providers)
 	data, _ = json.Marshal(doc)
-	view, err := decodeQuota(data)
+	view, err := decodeQuota(data, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

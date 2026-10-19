@@ -60,6 +60,8 @@ type QuotaReading struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Value string `json:"value"`
+	// ExpiresAt is when the card must stop showing the reading.
+	ExpiresAt string `json:"expires_at"`
 }
 
 type QuotaWindow struct {
@@ -69,6 +71,8 @@ type QuotaWindow struct {
 	Severity    string  `json:"severity"`
 	ResetsAt    string  `json:"resets_at,omitempty"`
 	Limited     bool    `json:"limited"`
+	// ExpiresAt, for observations only, is when the card must stop showing it.
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 type QuotaBalance struct {
@@ -141,8 +145,20 @@ func (a *App) quotaSession(w http.ResponseWriter, r *http.Request) (string, bool
 	return id, true
 }
 
+// fetchQuota asks for the legacy view with observations. Observations are
+// optional, so when ai-quota answers that request with anything but the view
+// or a rejected token (it returns 503 when the extension is too large), the
+// legacy view alone is requested once instead.
 func (a *App) fetchQuota(r *http.Request, token string) (QuotaView, int, error) {
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.quotaURL+"/api/v1/quota?include=observations", nil)
+	view, status, err := a.fetchQuotaPath(r, token, "/api/v1/quota?include=observations")
+	if err != nil && status != 0 && status != http.StatusUnauthorized && r.Context().Err() == nil {
+		return a.fetchQuotaPath(r, token, "/api/v1/quota")
+	}
+	return view, status, err
+}
+
+func (a *App) fetchQuotaPath(r *http.Request, token, path string) (QuotaView, int, error) {
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.quotaURL+path, nil)
 	if err != nil {
 		return QuotaView{}, 0, err
 	}
@@ -159,13 +175,13 @@ func (a *App) fetchQuota(r *http.Request, token string) (QuotaView, int, error) 
 	if err != nil || len(data) > quotaBodyLimit {
 		return QuotaView{}, response.StatusCode, errors.New("upstream body unavailable or oversized")
 	}
-	view, err := decodeQuota(data)
+	view, err := decodeQuota(data, time.Now())
 	return view, response.StatusCode, err
 }
 
 // decodeQuota pins the subset of ai-quota's v1 contract the card displays:
 // the legacy providers, then the products only observations report.
-func decodeQuota(data []byte) (QuotaView, error) {
+func decodeQuota(data []byte, now time.Time) (QuotaView, error) {
 	var upstream struct {
 		GeneratedAt string `json:"generated_at"`
 		Providers   []struct {
@@ -222,7 +238,7 @@ func decodeQuota(data []byte) (QuotaView, error) {
 		}
 		view.Providers = append(view.Providers, provider)
 	}
-	view.Providers = append(view.Providers, decodeObservations(upstream.Observations)...)
+	view.Providers = append(view.Providers, decodeObservations(upstream.Observations, now)...)
 	return view, nil
 }
 

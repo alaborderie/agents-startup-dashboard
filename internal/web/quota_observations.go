@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // observationProducts are the ai-quota products that exist only in the
@@ -39,10 +40,19 @@ var observationReasons = map[string]string{
 	"configuration_changed":             "Configuration changed; awaiting a new reading",
 }
 
-var windowLabels = map[string]string{"session": "Session", "weekly": "Week", "monthly": "Month", "other": "Period"}
+var windowLabels = map[string]string{"session": "Session", "weekly": "Week", "monthly": "Month", "other": "Period", "none": ""}
 
-// Canonical decimal string of the observations contract.
-var observationDecimal = regexp.MustCompile(`^-?(0|[1-9][0-9]{0,17})(\.[0-9]{0,9}[1-9])?$`)
+// Canonical decimal string and identifier of the observations contract.
+var (
+	observationDecimal = regexp.MustCompile(`^-?(0|[1-9][0-9]{0,17})(\.[0-9]{0,9}[1-9])?$`)
+	observationID      = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,160}$`)
+)
+
+var (
+	metricKinds   = map[string]bool{"allowance": true, "rate_limit": true, "balance": true, "usage_report": true}
+	limitStatuses = map[string]bool{"known": true, "unknown": true, "error": true}
+	qualities     = map[string]bool{"measured": true, "derived": true, "estimated": true, "unknown": true}
+)
 
 type observationLimit struct {
 	LimitID    string `json:"limit_id"`
@@ -50,23 +60,29 @@ type observationLimit struct {
 	Window     struct {
 		Kind string `json:"kind"`
 	} `json:"window"`
-	Unit      *string `json:"unit"`
-	Used      *string `json:"used"`
-	Remaining *string `json:"remaining"`
-	Exhausted *bool   `json:"exhausted"`
-	ResetAt   string  `json:"reset_at"`
-	Status    string  `json:"status"`
-	Reason    string  `json:"reason"`
+	Unit       *string `json:"unit"`
+	Used       *string `json:"used"`
+	Limit      *string `json:"limit"`
+	Remaining  *string `json:"remaining"`
+	Exhausted  *bool   `json:"exhausted"`
+	ResetAt    string  `json:"reset_at"`
+	ValidUntil string  `json:"valid_until"`
+	Status     string  `json:"status"`
+	Reason     string  `json:"reason"`
+	Quality    string  `json:"quality"`
+}
+
+type observationAttempt struct {
+	Status        string  `json:"status"`
+	Reason        string  `json:"reason"`
+	ObservationID *string `json:"observation_id"`
 }
 
 type observationAccess struct {
 	AccessID  string `json:"access_id"`
 	ProductID string `json:"product_id"`
 	Streams   []struct {
-		LatestAttempt struct {
-			Status string `json:"status"`
-			Reason string `json:"reason"`
-		} `json:"latest_attempt"`
+		LatestAttempt   observationAttempt `json:"latest_attempt"`
 		LastObservation *struct {
 			Limits []observationLimit `json:"limits"`
 		} `json:"last_observation"`
@@ -80,7 +96,7 @@ type observationAccess struct {
 // decodeObservations reads the optional observations block one access at a
 // time: a missing, malformed or unknown-version block, or a malformed access,
 // leaves the legacy cards untouched and only drops what cannot be read.
-func decodeObservations(raw json.RawMessage) []QuotaProvider {
+func decodeObservations(raw json.RawMessage, now time.Time) []QuotaProvider {
 	var block struct {
 		SchemaVersion int               `json:"schema_version"`
 		Accesses      []json.RawMessage `json:"accesses"`
@@ -91,7 +107,7 @@ func decodeObservations(raw json.RawMessage) []QuotaProvider {
 	byProduct := map[string][]observationAccess{}
 	for _, item := range block.Accesses {
 		var access observationAccess
-		if json.Unmarshal(item, &access) != nil || access.AccessID == "" {
+		if json.Unmarshal(item, &access) != nil || !observationID.MatchString(access.AccessID) {
 			continue
 		}
 		byProduct[access.ProductID] = append(byProduct[access.ProductID], access)
@@ -100,19 +116,21 @@ func decodeObservations(raw json.RawMessage) []QuotaProvider {
 	for _, product := range observationProducts {
 		accesses := byProduct[product.id]
 		for _, access := range accesses {
-			provider := observationProvider(product.name, access)
+			name := product.name
 			if len(accesses) > 1 {
-				provider.Plan = access.AccessID
+				// The title, not the plan badge, carries identity: the badge hides on phones.
+				name += " · " + access.AccessID
 			}
-			providers = append(providers, provider)
+			providers = append(providers, observationProvider(name, access, now))
 		}
 	}
 	return providers
 }
 
-// observationProvider shows only fresh, known readings; anything else becomes
-// a note, so the card never presents an expired or unknown value as current.
-func observationProvider(name string, access observationAccess) QuotaProvider {
+// observationProvider shows only fresh, valid, known readings; anything else
+// becomes a note, so the card never presents an expired or unknown value as
+// current. The server's freshness verdict is rechecked on the dashboard clock.
+func observationProvider(name string, access observationAccess, now time.Time) QuotaProvider {
 	provider := QuotaProvider{
 		Provider: access.ProductID, DisplayName: name,
 		Windows: []QuotaWindow{}, Readings: []QuotaReading{},
@@ -128,29 +146,39 @@ func observationProvider(name string, access observationAccess) QuotaProvider {
 	}
 	failed, expired := false, false
 	for _, stream := range access.Streams {
-		if stream.LatestAttempt.Status != "ok" {
-			failed = failed || stream.LatestAttempt.Status == "error"
-			note(reasonText(stream.LatestAttempt.Reason))
+		attempt := stream.LatestAttempt
+		if !validAttempt(attempt) {
+			attempt = observationAttempt{Status: "unknown", Reason: "schema_mismatch"}
 		}
-		if stream.LastObservation == nil {
-			continue
-		}
-		fresh := map[string]bool{}
-		for _, item := range stream.Freshness {
-			fresh[item.LimitID] = item.State == "fresh"
-		}
-		for _, limit := range stream.LastObservation.Limits {
-			switch {
-			case limit.Status != "known":
-				note(reasonText(limit.Reason))
-			case !fresh[limit.LimitID]:
-				expired = true
-				note("Last reading expired")
-			default:
-				if !addObservationLimit(&provider, limit) {
+		failed = failed || attempt.Status == "error"
+		shown := 0
+		if stream.LastObservation != nil {
+			fresh := map[string]bool{}
+			for _, item := range stream.Freshness {
+				fresh[item.LimitID] = item.State == "fresh"
+			}
+			for _, limit := range stream.LastObservation.Limits {
+				switch {
+				case !validLimit(limit):
+					note(reasonText("schema_mismatch"))
+				case limit.Status != "known":
+					note(reasonText(limit.Reason))
+				case !fresh[limit.LimitID] || !current(limit, now):
+					expired = true
+					note("Last reading expired")
+				case addObservationLimit(&provider, access.ProductID, limit):
+					shown++
+				default:
 					note(reasonText("schema_mismatch"))
 				}
 			}
+		}
+		switch {
+		case attempt.Status == "ok":
+		case shown > 0:
+			note("Last good reading; latest attempt: " + reasonText(attempt.Reason))
+		default:
+			note(reasonText(attempt.Reason))
 		}
 	}
 	switch {
@@ -170,19 +198,94 @@ func observationProvider(name string, access observationAccess) QuotaProvider {
 	return provider
 }
 
+func validAttempt(attempt observationAttempt) bool {
+	switch attempt.Status {
+	case "ok":
+		return attempt.Reason == "" && attempt.ObservationID != nil
+	case "unknown", "error":
+		return attempt.Reason != "" && attempt.ObservationID == nil
+	}
+	return false
+}
+
+// validLimit applies the contract's per-limit rules, as ai-quota's own web
+// client does, before a value can reach the card.
+func validLimit(limit observationLimit) bool {
+	if !observationID.MatchString(limit.LimitID) || !metricKinds[limit.MetricKind] || !limitStatuses[limit.Status] ||
+		!qualities[limit.Quality] || !validTime(limit.ResetAt) || !validTime(limit.ValidUntil) {
+		return false
+	}
+	if _, ok := windowLabels[limit.Window.Kind]; !ok {
+		return false
+	}
+	numbers := []*string{limit.Used, limit.Limit, limit.Remaining}
+	for _, number := range numbers {
+		if number != nil && (limit.Unit == nil || !observationDecimal.MatchString(*number) || *number == "-0") {
+			return false
+		}
+	}
+	if limit.Unit != nil && !observationID.MatchString(*limit.Unit) {
+		return false
+	}
+	negative := func(number *string) bool { return number != nil && strings.HasPrefix(*number, "-") }
+	if negative(limit.Used) || negative(limit.Limit) || negative(limit.Remaining) && limit.MetricKind != "balance" {
+		return false
+	}
+	if limit.Status != "known" {
+		return limit.Used == nil && limit.Limit == nil && limit.Remaining == nil && limit.Exhausted == nil && limit.Reason != ""
+	}
+	constraint := limit.MetricKind == "allowance" || limit.MetricKind == "rate_limit"
+	if limit.Exhausted != nil && (!constraint || limit.Quality == "estimated") {
+		return false
+	}
+	if limit.ValidUntil != "" && limit.ResetAt != "" && parseTime(limit.ValidUntil).After(parseTime(limit.ResetAt)) {
+		return false
+	}
+	return true
+}
+
+// current is the contract's freshness rule: a reading needs a validity
+// deadline and lapses at it or at a reset, whichever comes first.
+func current(limit observationLimit, now time.Time) bool {
+	expires := limitExpiry(limit)
+	return !expires.IsZero() && now.Before(expires)
+}
+
+func limitExpiry(limit observationLimit) time.Time {
+	expires := parseTime(limit.ValidUntil)
+	if reset := parseTime(limit.ResetAt); !reset.IsZero() && reset.Before(expires) {
+		expires = reset
+	}
+	return expires
+}
+
+func validTime(value string) bool {
+	return value == "" || !parseTime(value).IsZero()
+}
+
+func parseTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
 // addObservationLimit adds a percentage allowance as a meter and any other
 // amount as a native-unit reading. It reports false for an unreadable value.
-func addObservationLimit(provider *QuotaProvider, limit observationLimit) bool {
+func addObservationLimit(provider *QuotaProvider, product string, limit observationLimit) bool {
 	if limit.Unit == nil {
 		return false
 	}
 	unit := *limit.Unit
-	label := windowLabels[limit.Window.Kind]
+	period := windowLabels[limit.Window.Kind]
+	expiresAt := limitExpiry(limit).UTC().Format(time.RFC3339)
+	estimated := ""
+	if limit.Quality == "estimated" {
+		estimated = " (est.)"
+	}
 	constraint := limit.MetricKind == "allowance" || limit.MetricKind == "rate_limit"
 	if constraint && unit == "percent" && limit.Used != nil {
-		if !observationDecimal.MatchString(*limit.Used) {
-			return false
-		}
 		used, err := strconv.ParseFloat(*limit.Used, 64)
 		if err != nil {
 			return false
@@ -197,23 +300,30 @@ func addObservationLimit(provider *QuotaProvider, limit observationLimit) bool {
 		case used >= 70:
 			severity = "warn"
 		}
-		if label == "" {
-			label = "Usage"
+		if period == "" {
+			period = "Usage"
 		}
 		provider.Windows = append(provider.Windows, QuotaWindow{
-			ID: limit.LimitID, Label: label, UsedPercent: used,
-			Severity: severity, ResetsAt: limit.ResetAt, Limited: limited,
+			ID: limit.LimitID, Label: period + estimated, UsedPercent: used,
+			Severity: severity, ResetsAt: limit.ResetAt, Limited: limited, ExpiresAt: expiresAt,
 		})
 		return true
 	}
-	var value, suffix string
+	var label, value, suffix string
 	switch {
 	case limit.MetricKind == "balance" && limit.Remaining != nil:
-		value, label = *limit.Remaining, "Balance"
+		// A ledger is evidence, not a spendable quota.
+		label, value = "Ledger balance", *limit.Remaining
+	case limit.MetricKind == "usage_report" && limit.Used != nil:
+		// A billing report says nothing about what remains.
+		label, value = "Reported", *limit.Used
+		if product == "github_copilot" {
+			label = "Gross reported"
+		}
 	case constraint && limit.Remaining != nil:
-		value, suffix = *limit.Remaining, " left"
-	case limit.Used != nil:
-		value, suffix = *limit.Used, " used"
+		label, value, suffix = "Remaining", *limit.Remaining, " left"
+	case constraint && limit.Used != nil:
+		label, value, suffix = "Used", *limit.Used, " used"
 	default:
 		return false
 	}
@@ -221,10 +331,12 @@ func addObservationLimit(provider *QuotaProvider, limit observationLimit) bool {
 	if !ok {
 		return false
 	}
-	if label == "" {
-		label = "Usage"
+	if period != "" {
+		label += " · " + period
 	}
-	provider.Readings = append(provider.Readings, QuotaReading{ID: limit.LimitID, Label: label, Value: amount + suffix})
+	provider.Readings = append(provider.Readings, QuotaReading{
+		ID: limit.LimitID, Label: label, Value: amount + suffix + estimated, ExpiresAt: expiresAt,
+	})
 	return true
 }
 
@@ -251,7 +363,7 @@ func formatNativeAmount(value, unit string) (string, bool) {
 		if unit == "usd_cent" {
 			amount.Quo(amount, big.NewRat(100, 1))
 		}
-		text := strings.TrimRight(amount.FloatString(11), "0")
+		text := strings.TrimRight(amount.FloatString(12), "0")
 		if dot := strings.IndexByte(text, '.'); len(text)-dot < 3 {
 			text += strings.Repeat("0", 3-(len(text)-dot))
 		}

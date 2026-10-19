@@ -789,7 +789,8 @@ kbd {
 .q-sev { font: 800 var(--t-xs)/1 var(--font-display); text-transform: uppercase; letter-spacing: .05em; margin-left: 6px; }
 .q-sev.warn { color: var(--warn); }.q-sev.bad { color: var(--bad); }
 .q-balance { display: flex; justify-content: space-between; gap: 8px; font-size: var(--t-sm); color: var(--ink-2); }
-.q-balance b { font-family: var(--font-mono); color: var(--ink); }
+.q-balance b { font-family: var(--font-mono); color: var(--ink); text-align: right; }
+.q-balance + .q-balance { margin-top: 6px; }
 .q-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 2px solid var(--line); border-radius: var(--r-inner); background: var(--sunk); color: var(--ink-2); font-size: var(--t-sm); }
 .q-note.err { border-color: var(--bad); }
 .q-form label { display: block; font: 800 var(--t-sm)/1.2 var(--font-display); margin-bottom: 6px; }
