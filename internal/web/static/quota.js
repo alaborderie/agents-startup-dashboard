@@ -7,6 +7,9 @@
 
   var active = false;
   var generatedAt = "";
+  // The last rendered view, redrawn when one of its readings expires between polls.
+  var shown = null;
+  var nextExpiry = Infinity;
 
   function element(tag, className, text) {
     var node = document.createElement(tag);
@@ -31,7 +34,17 @@
     return prefix + (prefix === "updated" ? " " : " in ") + parts.join(" ") + (prefix === "updated" ? " ago" : "");
   }
 
+  // Observation readings carry a deadline; legacy windows never expire here.
+  function current(item) {
+    var expiry = Date.parse(item.expires_at);
+    if (!item.expires_at) { return true; }
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) { return false; }
+    nextExpiry = Math.min(nextExpiry, expiry);
+    return true;
+  }
+
   function updateTimes() {
+    if (shown && Date.now() >= nextExpiry) { render(shown); return; }
     if (generatedAt) {
       meta.textContent = relative(generatedAt, "updated");
       meta.title = new Date(generatedAt).toLocaleString();
@@ -50,6 +63,7 @@
 
   function prompt(rejected) {
     generatedAt = "";
+    shown = null;
     meta.textContent = "";
     var form = element("form", "q-form");
     var label = element("label", "", "ai-quota READ token");
@@ -100,6 +114,7 @@
 
   function unavailable() {
     generatedAt = "";
+    shown = null;
     meta.textContent = "";
     var panel = element("div");
     var note = element("p", "q-note err", "Quota unavailable — HQ unaffected.");
@@ -144,13 +159,23 @@
     var heading = element("div", "q-prov-head");
     heading.append(element("h3", "", provider.display_name));
     if (provider.plan) { heading.append(element("span", "q-plan", provider.plan)); }
-    var stale = provider.freshness !== "fresh" || provider.status_state !== "ok";
-    heading.append(element("span", "q-fresh" + (stale ? " stale" : ""), provider.status_state !== "ok" ? provider.status_state || "unavailable" : provider.freshness || "missing"));
+    var windows = (provider.windows || []).filter(current);
+    var readings = (provider.readings || []).filter(current);
+    var lapsed = !windows.length && !readings.length &&
+      ((provider.windows || []).length > 0 || (provider.readings || []).length > 0);
+    var stale = lapsed || provider.freshness !== "fresh" || provider.status_state !== "ok";
+    heading.append(element("span", "q-fresh" + (stale ? " stale" : ""), lapsed ? "expired" : provider.status_state !== "ok" ? provider.status_state || "unavailable" : provider.freshness || "missing"));
     section.append(heading);
     if (stale) {
-      section.append(element("p", "q-note", provider.status_message || "Quota " + (provider.freshness || "unavailable") + "."));
-    } else if (provider.windows && provider.windows.length) {
-      provider.windows.forEach(function (windowData) { section.append(windowRow(provider, windowData)); });
+      section.append(element("p", "q-note", lapsed ? provider.expired_message || "Last reading expired." : provider.status_message || "Quota " + (provider.freshness || "unavailable") + "."));
+    } else if (windows.length || readings.length) {
+      windows.forEach(function (windowData) { section.append(windowRow(provider, windowData)); });
+      readings.forEach(function (reading) {
+        var row = element("div", "q-balance");
+        row.append(element("span", "", reading.label || reading.id), element("b", "", reading.value));
+        section.append(row);
+      });
+      if (provider.status_message) { section.append(element("p", "q-help", provider.status_message)); }
     } else if (provider.balance) {
       var balance = element("div", "q-balance");
       balance.append(element("span", "", provider.balance.label || "Balance left"));
@@ -174,6 +199,8 @@
     }
     if (data.state !== "ok" || !Array.isArray(data.providers)) { unavailable(); return; }
     generatedAt = data.generated_at || "";
+    shown = data;
+    nextExpiry = Infinity;
     var panel = element("div");
     if (!data.providers.length) { panel.append(element("p", "q-note", "No provider has reported yet.")); }
     data.providers.forEach(function (provider) { panel.append(providerRow(provider)); });

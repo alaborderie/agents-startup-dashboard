@@ -16,7 +16,7 @@ const quotaReadToken = "synthetic-quota-test-token"
 
 func TestQuotaTokenFlowIsSessionBoundAndForgetsOnLogout(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/quota" || r.Header.Get("Authorization") != "Bearer "+quotaReadToken {
+		if r.URL.Path != "/api/v1/quota" || r.URL.Query().Get("include") != "observations" || r.Header.Get("Authorization") != "Bearer "+quotaReadToken {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
