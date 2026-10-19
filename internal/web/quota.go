@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-const quotaBodyLimit = 256 << 10
+// ai-quota caps the response with observations at 1 MiB.
+const quotaBodyLimit = 1 << 20
 const defaultQuotaURL = "http://ai-quota-viewer.default.svc.cluster.local"
 
 // QuotaView is the dashboard-owned response, separate from the upstream API.
@@ -50,6 +51,15 @@ type QuotaProvider struct {
 	StatusMessage string        `json:"status_message,omitempty"`
 	Windows       []QuotaWindow `json:"windows"`
 	Balance       *QuotaBalance `json:"balance,omitempty"`
+	// Readings are native-unit amounts from observations, such as a ledger
+	// balance or a billing report; they are never percentages of a quota.
+	Readings []QuotaReading `json:"readings,omitempty"`
+}
+
+type QuotaReading struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 type QuotaWindow struct {
@@ -132,7 +142,7 @@ func (a *App) quotaSession(w http.ResponseWriter, r *http.Request) (string, bool
 }
 
 func (a *App) fetchQuota(r *http.Request, token string) (QuotaView, int, error) {
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.quotaURL+"/api/v1/quota", nil)
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.quotaURL+"/api/v1/quota?include=observations", nil)
 	if err != nil {
 		return QuotaView{}, 0, err
 	}
@@ -153,7 +163,8 @@ func (a *App) fetchQuota(r *http.Request, token string) (QuotaView, int, error) 
 	return view, response.StatusCode, err
 }
 
-// decodeQuota pins the subset of ai-quota's v1 contract the card displays.
+// decodeQuota pins the subset of ai-quota's v1 contract the card displays:
+// the legacy providers, then the products only observations report.
 func decodeQuota(data []byte) (QuotaView, error) {
 	var upstream struct {
 		GeneratedAt string `json:"generated_at"`
@@ -177,6 +188,7 @@ func decodeQuota(data []byte) (QuotaView, error) {
 			} `json:"windows"`
 			Balance *QuotaBalance `json:"balance"`
 		} `json:"providers"`
+		Observations json.RawMessage `json:"observations"`
 	}
 	if err := json.Unmarshal(data, &upstream); err != nil || upstream.GeneratedAt == "" || upstream.Providers == nil {
 		return QuotaView{}, errors.New("invalid upstream quota")
@@ -210,6 +222,7 @@ func decodeQuota(data []byte) (QuotaView, error) {
 		}
 		view.Providers = append(view.Providers, provider)
 	}
+	view.Providers = append(view.Providers, decodeObservations(upstream.Observations)...)
 	return view, nil
 }
 

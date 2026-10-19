@@ -13,6 +13,8 @@ class Element {
     this.attributes = {};
     this.value = "";
     this.textContent = "";
+    this.dataset = {};
+    this.style = { setProperty() {} };
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
@@ -111,4 +113,26 @@ test("a token saved in another tab still replaces the prompt on the next poll", 
   await ui.poll();
   assert.equal(ui.body.querySelector("form"), null);
   assert.ok(ui.body.querySelector(".q-foot"));
+});
+
+const texts = node => [node.textContent, ...node.children.flatMap(texts)].filter(Boolean);
+
+test("observation readings show native amounts and a partial-failure note", async () => {
+  const ui = await card();
+  ui.reply({ state: "ok", generated_at: "2026-10-19T12:00:00Z", providers: [
+    { provider: "cursor", display_name: "Cursor", freshness: "fresh", status_state: "ok", status_message: "Timed out", readings: [],
+      windows: [{ id: "weekly", label: "Week", used_percent: 72.5, severity: "warn", resets_at: "2026-10-22T00:00:00Z", limited: false }] },
+    { provider: "xai_api", display_name: "xAI API", freshness: "fresh", status_state: "ok", windows: [],
+      readings: [{ id: "prepaid-ledger-total", label: "Balance", value: "−$10.00" }] },
+    { provider: "github_copilot", display_name: "GitHub Copilot", freshness: "missing", status_state: "error",
+      status_message: "Authentication failed", windows: [], readings: [] }
+  ] });
+  await ui.poll();
+  const [cursor, xai, copilot] = ui.body.querySelectorAll(".q-prov");
+  assert.ok(cursor.querySelector(".q-bar"));
+  assert.deepEqual(texts(cursor.querySelector(".q-help")), ["Timed out"]);
+  assert.deepEqual(texts(xai.querySelector(".q-balance")), ["Balance", "−$10.00"]);
+  assert.equal(xai.querySelector(".q-help"), null);
+  assert.equal(copilot.querySelector(".q-balance"), null);
+  assert.deepEqual(texts(copilot.querySelector(".q-note")), ["Authentication failed"]);
 });

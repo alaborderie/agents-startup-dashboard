@@ -149,8 +149,14 @@
     section.append(heading);
     if (stale) {
       section.append(element("p", "q-note", provider.status_message || "Quota " + (provider.freshness || "unavailable") + "."));
-    } else if (provider.windows && provider.windows.length) {
-      provider.windows.forEach(function (windowData) { section.append(windowRow(provider, windowData)); });
+    } else if ((provider.windows && provider.windows.length) || (provider.readings && provider.readings.length)) {
+      (provider.windows || []).forEach(function (windowData) { section.append(windowRow(provider, windowData)); });
+      (provider.readings || []).forEach(function (reading) {
+        var row = element("div", "q-balance");
+        row.append(element("span", "", reading.label || reading.id), element("b", "", reading.value));
+        section.append(row);
+      });
+      if (provider.status_message) { section.append(element("p", "q-help", provider.status_message)); }
     } else if (provider.balance) {
       var balance = element("div", "q-balance");
       balance.append(element("span", "", provider.balance.label || "Balance left"));

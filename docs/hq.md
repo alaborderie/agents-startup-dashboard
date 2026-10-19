@@ -261,7 +261,13 @@ other panels work without it. The browser sends the token only with
 `/api/v1/quota`, seals it with a key derived from `DASHBOARD_INGEST_TOKEN`, and
 stores the sealed value under the current HQ session. Subsequent
 `GET /hq/api/quota` calls use the stored token and return a trimmed view of
-Claude, ChatGPT, OpenCode Go and OpenCode Zen. `DELETE /hq/api/quota/token`
+Claude, ChatGPT, OpenCode Go and OpenCode Zen, followed by Cursor, the xAI API
+and GitHub Copilot from ai-quota's opt-in observations
+(`/api/v1/quota?include=observations`). Those three show only fresh, known
+readings: a Cursor percentage as a meter, an xAI balance or a Copilot billing
+report as an exact amount in its own unit (never a remaining quota). Expired,
+unknown or failed readings become a short note, and a missing or unreadable
+observations block leaves the other cards unchanged. `DELETE /hq/api/quota/token`
 forgets it. The card polls every 60 seconds while visible and never blocks
 HQ state updates. If ai-quota is down, only the card shows an unavailable state.
 
